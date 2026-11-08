@@ -7,7 +7,7 @@
 - One persistent OMP orchestrator Session routes and evaluates.
 - One persistent OMP worker Session per Ticket executes and reports.
 - SQLite stores domain state, durable effects and outbox order. OMP JSONL stores transcripts and idempotent message IDs.
-- GitHub is optional; a loopback Web conversation panel is included. Feishu, DSH hosting, online settings/Prompt editing, worker subagents and async background jobs are not included.
+- GitHub is optional; a Web conversation panel and Tencent iLink WeChat binding are included. Feishu, DSH hosting, online settings/Prompt editing, worker subagents and async background jobs are not included.
 
 ## Usage
 
@@ -60,6 +60,8 @@ Example `config.json`:
 Role models accept `null` or `{ "provider": "...", "model": "...", "thinkingLevel": "low" }`. Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown explicit models fail startup; no fallback model is selected silently.
 
 The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configuration. Omit `sources.github` for chat-only use. Configure it with `"web": { "enabled": true, "host": "127.0.0.1", "port": 3082 }`; set `enabled` to `false` to disable it or `port` to `0` for an ephemeral port. The CLI prints the actual URL. The server accepts loopback requests only and uses no remote assets or CORS. Upload any file type, up to 3 attachments per message and 5 MiB each. PNG/JPEG/WebP/GIF use native OMP image content; UTF-8 text up to 256 KiB is inlined; other and larger files are stored under `<stateDir>/attachments/<requestId>/` with their paths included in the message so OMP can inspect or transform them with `read`/`bash`.
+
+The panel's **连接微信** button creates a local QR code through Tencent's iLink Bot API. Scan and confirm with WeChat `>=8.0.70`; enter the phone verification code if requested. The bound WeChat user chats with the same persistent orchestrator Session, with text replies returned automatically and image/file/video attachments transferred through the encrypted WeChat CDN. The orchestrator can send a local file explicitly with `wechat_send_file`. Bindings and the long-poll cursor persist in `orchestrator.sqlite` and resume after restart; disconnecting removes only the binding and cursor, never the OMP transcript. Media is limited to 100 MiB per item.
 
 ### 3. Build and start
 

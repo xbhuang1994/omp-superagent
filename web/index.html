@@ -13,7 +13,10 @@
         <h1>OMP 对话面板</h1>
         <p>与持久 orchestrator Session 对话，仅监听本机。</p>
       </div>
-      <span id="status" class="status" role="status">连接中…</span>
+      <div class="topbar-side">
+        <button id="wechat-button" class="wechat-button" type="button">连接微信</button>
+        <span id="status" class="status" role="status">连接中…</span>
+      </div>
     </header>
     <section id="transcript" class="transcript" aria-label="对话记录" aria-live="polite"></section>
     <p id="empty" class="empty">暂无消息。发送一条消息开始对话。</p>
@@ -32,6 +35,20 @@
       </div>
     </form>
   </main>
+    <dialog id="wechat-modal" class="wechat-modal" aria-labelledby="wechat-title">
+      <form method="dialog" class="dialog-close"><button type="submit" aria-label="关闭">×</button></form>
+      <h2 id="wechat-title">连接微信</h2>
+      <p id="wechat-message" role="status">正在获取连接状态…</p>
+      <img id="wechat-qr" class="wechat-qr" alt="微信连接二维码" hidden>
+      <form id="wechat-verify" class="wechat-verify" hidden>
+        <label for="wechat-code">手机微信显示的验证码</label>
+        <div><input id="wechat-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]+" required><button type="submit">提交</button></div>
+      </form>
+      <div class="dialog-actions">
+        <button id="wechat-disconnect" class="danger" type="button" hidden>断开微信</button>
+        <button id="wechat-refresh" type="button">重新获取二维码</button>
+      </div>
+    </dialog>
   <script src="/app.js" defer></script>
 </body>
 </html>

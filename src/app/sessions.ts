@@ -220,10 +220,11 @@ export class OMPSessions {
     await this.delivery.send(session, requestId, text, mode, this.host.lifetime, inputIds, authorize, accepted)
   }
   /** Queue one local operator message; use vision, inline text, or durable files according to each payload. */
-  async chat(sessionId: string, text: string, attachments: ChatAttachment[] = []): Promise<string> {
+  async chat(sessionId: string, text: string, attachments: ChatAttachment[] = [],
+    options: { requestId?: string; source?: string } = {}): Promise<string> {
     const session = this.loaded.get(sessionId)
     if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
-    const requestId = `web:${randomUUID()}`
+    const requestId = options.requestId ?? `web:${randomUUID()}`
     const images: ImageContent[] = []
     const rendered: string[] = []
     const metadata: AttachmentMetadata[] = []
@@ -254,8 +255,22 @@ export class OMPSessions {
     const content: ChatContent = [{ type: 'text', text: body }, ...images]
     this.bind(session)
     await this.delivery.send(session, requestId, content, 'queue', this.host.lifetime, undefined, undefined, undefined,
-      { display: true, attribution: 'user', source: 'web-panel', attachments: metadata })
+      { display: true, attribution: 'user', source: options.source ?? 'web-panel', attachments: metadata })
     return requestId
+  }
+  /** Notify a channel once per yielded agent run with its final non-error assistant text. */
+  onReply(sessionId: string, listener: (text: string) => void): () => void {
+    const session = this.loaded.get(sessionId)
+    if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
+    return session.subscribe(event => {
+      if (event.type !== 'agent_end' || event.yielded === false) return
+      for (let index = event.messages.length - 1; index >= 0; index--) {
+        const message = event.messages[index]
+        if (message?.role !== 'assistant' || message.stopReason === 'error' || message.stopReason === 'aborted') continue
+        const text = message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n').trim()
+        if (text) { listener(text); return }
+      }
+    })
   }
 
 

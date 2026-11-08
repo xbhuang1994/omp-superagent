@@ -13,6 +13,7 @@ import { Prompts } from '../src/app/prompts.ts'
 import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels, type OmpFixture } from './fixtures/omp-openai-server.ts'
+import { WeChatBridge } from '../src/app/wechat.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 let dir: string
@@ -20,6 +21,7 @@ let server: OmpFixture
 let store: Store
 let sessions: OMPSessions
 let panel: WebPanel
+let wechat: WeChatBridge
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'omp-web-panel-'))
   server = await startOmpOpenAIServer(() => ({ content: 'Panel reply' }))
@@ -32,11 +34,14 @@ beforeEach(async () => {
     closing: () => false, environment: () => [], engine: { inputsDelivered: () => {}, inputsRead: () => {} }, tools: () => [] })
   await sessions.ready
   await sessions.ensure('main', dir, 'Main', 'orchestrator')
-  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions)
+  wechat = new WeChatBridge({ store, sessions, masterId: 'main' })
+  await wechat.start()
+  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat)
   await panel.start()
 })
 afterEach(async () => {
   await panel.stop()
+  await wechat.stop()
   await sessions.stopAll()
   await server.close()
   store.close()
@@ -127,7 +132,7 @@ it('rejects invalid base64 and too many attachments', async () => {
 })
 
 it('accepts same-origin browser requests on a wildcard LAN listener', async () => {
-  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions)
+  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat)
   await lan.start()
   try {
     const url = lan.url.replace('0.0.0.0', '127.0.0.1')

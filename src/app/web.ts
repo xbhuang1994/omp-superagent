@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 import { packagePath } from '../infra/paths.ts'
 import type { ChatAttachment, OMPSessions } from './sessions.ts'
+import type { WeChatBridge } from './wechat.ts'
 
 interface AttachmentInfo { name: string; mediaType: string; kind: 'image' | 'text' | 'file' }
 interface PanelMessage { id: number; role: 'user' | 'assistant' | 'event'; text: string; at?: number; images?: { name: string; mediaType: string; data: string }[]; files?: AttachmentInfo[] }
@@ -66,7 +67,7 @@ export class WebPanel {
   private server?: Server
   private actualPort = 0
   constructor(private readonly options: WebOptions, private readonly masterId: string,
-    private readonly sessions: Pick<OMPSessions, 'get' | 'chat'>) {}
+    private readonly sessions: Pick<OMPSessions, 'get' | 'chat'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>) {}
 
   get url(): string { return `http://${this.options.host}:${this.actualPort}/` }
 
@@ -97,6 +98,15 @@ export class WebPanel {
       const path = new URL(request.url ?? '/', this.url).pathname
       if (request.method === 'GET' && path === '/api/health') return this.json(response, 200, { ready: true })
       if (request.method === 'GET' && path === '/api/messages') return this.json(response, 200, { messages: this.messages() })
+      if (request.method === 'GET' && path === '/api/wechat') return this.json(response, 200, this.wechat.status())
+      if (request.method === 'POST' && path === '/api/wechat/connect') return this.json(response, 200, await this.wechat.connect())
+      if (request.method === 'POST' && path === '/api/wechat/disconnect') return this.json(response, 200, await this.wechat.disconnect())
+      if (request.method === 'POST' && path === '/api/wechat/verify') {
+        if (request.headers['content-type'] !== 'application/json') return this.json(response, 415, { error: 'Expected application/json' })
+        const parsed: unknown = JSON.parse(await this.body(request))
+        if (!parsed || typeof parsed !== 'object' || !('code' in parsed) || typeof parsed.code !== 'string') return this.json(response, 400, { error: 'Expected { code: string }' })
+        return this.json(response, 200, this.wechat.verify(parsed.code))
+      }
       if (request.method === 'POST' && path === '/api/chat') {
         if (request.headers['content-type'] !== 'application/json') return this.json(response, 415, { error: 'Expected application/json' })
         const body = await this.body(request)

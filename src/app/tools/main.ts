@@ -8,6 +8,7 @@ import { ticketCard } from '../cards.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
 import type { Store } from '../store.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
+import type { WeChatBridge } from '../wechat.ts'
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
@@ -22,6 +23,7 @@ export interface MainToolsHost {
   sendReplies(): Promise<void>
   /** Runs an Engine command initiated by the main Session without emitting self-notifications. */
   quietly<T>(run: () => T): T
+  readonly wechat: Pick<WeChatBridge, 'sendFile'>
 }
 /** Schedules an Engine pass to execute the recorded routing decision and formats the tool response. */
 function routed(host: MainToolsHost, result: { decision?: DecisionKind; reason: string; ticketId?: string | undefined }) {
@@ -234,6 +236,12 @@ export function mainTools(host: MainToolsHost, sessionId: string): Tool[] {
       execute: async args => {
         return { removed: host.quietly(() => host.engine.unsubscribe(args.thread)), thread: args.thread }
       },
+    }),
+    tool({
+      name: 'wechat_send_file',
+      description: 'Send a local image, video, or other file to the WeChat user bound through the WebUI. Use an absolute path produced or verified during this conversation; optional caption is sent before the media. Requires an active binding.',
+      schema: z.object({ path: z.string().trim().min(1).describe('Absolute local file path.'), caption: z.string().max(8000).optional() }).strict(),
+      execute: async ({ path, caption }) => host.wechat.sendFile(path, caption),
     }),
   ]
 }

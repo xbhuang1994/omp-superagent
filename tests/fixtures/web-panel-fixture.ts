@@ -9,6 +9,7 @@ import { Prompts } from '../../src/app/prompts.ts'
 import { HealthBoard } from '../../src/infra/health.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels } from './omp-openai-server.ts'
+import { WeChatBridge } from '../../src/app/wechat.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'omp-web-browser-'))
 const provider = await startOmpOpenAIServer(() => ({ content: '浏览器回复：你好，OMP 已收到。' }))
@@ -21,11 +22,14 @@ const sessions = new OMPSessions({ store, prompts: new Prompts(store, () => 1000
   engine: { inputsDelivered: () => {}, inputsRead: () => {} }, tools: () => [] })
 await sessions.ready
 await sessions.ensure('main', dir, 'Main', 'orchestrator')
-const panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 3082 }, 'main', sessions)
+const wechat = new WeChatBridge({ store, sessions, masterId: 'main' })
+await wechat.start()
+const panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 3082 }, 'main', sessions, wechat)
 await panel.start()
 console.log(panel.url)
 process.once('SIGINT', async () => {
   await panel.stop()
+  await wechat.stop()
   await sessions.stopAll()
   await provider.close()
   store.close()

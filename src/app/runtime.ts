@@ -31,6 +31,7 @@ import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { WebPanel } from './web.ts'
+import { WeChatBridge } from './wechat.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -49,6 +50,7 @@ export class Runtime implements SourceHost {
   readonly passes: Passes
   readonly ready: Promise<void>
   readonly web: WebPanel
+  readonly wechat: WeChatBridge
   readonly masterId: string
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
@@ -97,7 +99,8 @@ export class Runtime implements SourceHost {
           inputsRead: (ticketId, inputIds) => this.engine.inputsRead(ticketId, inputIds),
         },
         tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, sessionId) })
-      this.web = new WebPanel(machine.web, masterId, sessions)
+      this.wechat = new WeChatBridge({ store, sessions, masterId })
+      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat)
       this.executor = new OMPExecutor({ get engine() { return runtime.engine }, store, effects, health: this.board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
@@ -129,6 +132,7 @@ export class Runtime implements SourceHost {
         get deployment() { return runtime.deployment }, configured: () => this.configured(), receive: trigger => passes.receive(trigger) }
       this.toolHost = { logger: { warn: message => console.warn(message) }, engine, store, sessions, assessor: this.assessor, resources,
         get github() { return runtime.context(githubKind) }, requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
+        get wechat() { return runtime.wechat },
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize().catch(async error => { await this.stop(); throw error })
     } catch (error) {
@@ -183,6 +187,7 @@ export class Runtime implements SourceHost {
     }
     await this.sessions.ready
     await this.sessions.ensure(this.masterId, this.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
+    await this.wechat.start()
     if (this.closing()) return
     this.executor.resume()
     this.passes.start()
@@ -205,6 +210,7 @@ export class Runtime implements SourceHost {
       this.assessor.stop()
       await Promise.allSettled([...(this.watcher ? [this.watcher] : []), passes])
       await this.web.stop()
+      await this.wechat.stop()
       await this.sessions.stopAll()
       this.executor.dispose()
       await this.effects.drain()

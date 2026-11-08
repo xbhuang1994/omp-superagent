@@ -9,6 +9,15 @@ const send = document.querySelector('#send')
 const feedback = document.querySelector('#feedback')
 const fileInput = document.querySelector('#attachments')
 const attachmentList = document.querySelector('#attachment-list')
+const wechatButton = document.querySelector('#wechat-button')
+const wechatModal = document.querySelector('#wechat-modal')
+const wechatMessage = document.querySelector('#wechat-message')
+const wechatQr = document.querySelector('#wechat-qr')
+const wechatVerify = document.querySelector('#wechat-verify')
+const wechatCode = document.querySelector('#wechat-code')
+const wechatDisconnect = document.querySelector('#wechat-disconnect')
+const wechatRefresh = document.querySelector('#wechat-refresh')
+let wechatState
 const rendered = new Set()
 let selected = []
 
@@ -60,6 +69,55 @@ async function refresh() {
     status.className = 'status offline'
   }
 }
+function renderWeChat(data) {
+  wechatState = data
+  wechatButton.textContent = data.state === 'connected' ? '微信已连接' : '连接微信'
+  wechatButton.classList.toggle('connected', data.state === 'connected')
+  wechatMessage.textContent = data.message
+  wechatQr.hidden = !data.qrCode || !['waiting', 'scaned', 'verify'].includes(data.state)
+  if (data.qrCode) wechatQr.src = data.qrCode
+  wechatVerify.hidden = data.state !== 'verify'
+  wechatDisconnect.hidden = data.state === 'disconnected'
+  wechatRefresh.hidden = data.state === 'connected'
+}
+async function wechatRequest(path, options) {
+  const response = await fetch(path, options)
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.error || `微信操作失败 (${response.status})`)
+  renderWeChat(data)
+  return data
+}
+async function refreshWeChat() {
+  try { await wechatRequest('/api/wechat') }
+  catch (error) {
+    if (wechatModal.open) wechatMessage.textContent = error instanceof Error ? error.message : String(error)
+  }
+}
+async function connectWeChat() {
+  wechatRefresh.disabled = true
+  try { await wechatRequest('/api/wechat/connect', { method: 'POST' }) }
+  catch (error) { wechatMessage.textContent = error instanceof Error ? error.message : String(error) }
+  finally { wechatRefresh.disabled = false }
+}
+wechatButton.addEventListener('click', async () => {
+  wechatModal.showModal()
+  await refreshWeChat()
+  if (['disconnected', 'error'].includes(wechatState?.state)) await connectWeChat()
+})
+wechatRefresh.addEventListener('click', connectWeChat)
+wechatDisconnect.addEventListener('click', async () => {
+  wechatDisconnect.disabled = true
+  try { await wechatRequest('/api/wechat/disconnect', { method: 'POST' }) }
+  catch (error) { wechatMessage.textContent = error instanceof Error ? error.message : String(error) }
+  finally { wechatDisconnect.disabled = false }
+})
+wechatVerify.addEventListener('submit', async event => {
+  event.preventDefault()
+  try {
+    await wechatRequest('/api/wechat/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: wechatCode.value }) })
+    wechatCode.value = ''
+  } catch (error) { wechatMessage.textContent = error instanceof Error ? error.message : String(error) }
+})
 
 function updateSend() { send.disabled = !textarea.value.trim() && selected.length === 0 }
 function showSelected() {
@@ -143,4 +201,6 @@ textarea.addEventListener('keydown', event => {
 
 updateSend()
 refresh()
+refreshWeChat()
+setInterval(refreshWeChat, 2000)
 setInterval(refresh, 2000)

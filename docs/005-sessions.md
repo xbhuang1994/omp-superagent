@@ -17,3 +17,9 @@ Non-null role models resolve through the shared registry and override restored t
 Application messages use hidden custom messages, never host inbox objects. Each carries `requestId` and optional Input IDs. The delivery layer scans full SessionManager branches, not only active model messages. Entry visibility plus `flushToDisk()` is the commit barrier; Effects never wait for the whole model turn.
 
 `transcript(ticketId)` returns OMP `AgentMessage[]`, supporting resource pagination/previews. `stopAll()` begins disposal on all loaded Sessions before awaiting any cleanup, preventing queued work from starting another turn.
+
+## Web and WeChat chat
+
+Visible chat messages use the same durable custom-entry delivery as other application messages. Web requests generate `web:<uuid>` IDs; WeChat uses `wechat:<message_id>` so redelivery after a crash cannot create another turn. Both use native image content, inline UTF-8 text, or durable files as appropriate.
+
+`WeChatBridge` accepts direct messages only from the user ID captured during QR binding. It advances the persisted iLink cursor only after Session delivery reaches the disk barrier. Final assistant text from each yielded orchestrator run is sent to the bound user; `wechat_send_file` sends a verified local image, video, or file. Credentials, bound user, context token, and cursor live in SQLite and are never exposed by the Web API.

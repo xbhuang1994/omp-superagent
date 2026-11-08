@@ -2,6 +2,7 @@
  * Typed key-value store keys and key families grouped by the single component that owns and writes each family.
  * Readers and writers refer to a record by its entry here so each key is spelled once with its value type.
  */
+import type { WeChatAccount } from './app/wechat-protocol.ts'
 import type { PromptVersion } from './app/prompts.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SettingsSave } from './policy.ts'
@@ -45,4 +46,6 @@ export const KV = {
     stream: family<{ since: string; started: Record<string, string>; etag?: string }, [stream: string]>('github-stream:'),
     branchCi: record<{ branch?: string; failures?: string[]; revision: number }>('github-branch-ci'),
     ci: family<{ fingerprint: string; revision: number }, [number: number]>('github-ci:') },
+  /** WeChat: bound bot credentials/user and durable long-poll cursor. */
+  wechat: { account: record<WeChatAccount>('wechat-account'), cursor: record<string>('wechat-cursor') },
 }
