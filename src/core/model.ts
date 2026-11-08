@@ -175,7 +175,7 @@ export interface Thread {
   /** How many Evals of its queued Triggers expired in a row, each of which queued them again; a Decision clears it. */
   expired?: number
   /**
-   * Source-native attributes needed by channels or readers (for example a Feishu thread id). Its Source may also describe
+   * Source-native attributes needed by channels or readers (for example a GitHub Issue/PR number). Its Source may also describe
    * the thread for people: `label`, a display name, and `facts`, a {@link ThreadFacts} map.
    */
   meta: Record<string, unknown>

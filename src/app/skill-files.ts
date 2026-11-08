@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { packagePath } from '../infra/paths.ts'
 /**
  * Reads a packaged text file with normalized Unix line endings.
- * @throws Naming the file when it is missing or whitespace-only, because `dsh-superagent` cannot load without it.
+ * @throws Naming the file when it is missing or whitespace-only, because `omp-superagent` cannot load without it.
  */
 function packaged(...parts: string[]): { path: string; text: string } {
   const path = packagePath(...parts)
@@ -16,12 +16,12 @@ function packaged(...parts: string[]): { path: string; text: string } {
   return { path, text }
 }
 function load(name: string) {
-  const { path, text } = packaged('skills', `dsh-superagent-${name}`, 'SKILL.md')
+  const { path, text } = packaged('skills', `omp-superagent-${name}`, 'SKILL.md')
   const match = /^---\nname: ([^\n]+)\ndescription: ([^\n]+)\n---\n\n([\s\S]*)$/.exec(text)
   if (!match) throw new Error(`Invalid packaged skill: ${path}`)
   return { name: match[1]!, description: match[2]!, content: match[3]!, path }
 }
-export const bundledSkills = { feishu: load('feishu'), github: load('github') }
+export const bundledSkills = { github: load('github') }
 /**
  * Loads a built-in prompt file (`prompts/<name>.md`). Source `.md` files are written one sentence per line for
  * readable diffs; `promptFile` joins lines within each paragraph with spaces while keeping blank-line paragraph breaks.

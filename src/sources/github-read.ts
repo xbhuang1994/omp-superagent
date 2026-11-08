@@ -1,5 +1,5 @@
 /** Read-only GitHub repository, conversation, and CI check inspection for assessments and workers. */
-import { z } from 'zod'
+import z from 'zod'
 import type { ThreadFact } from '../core/index.ts'
 import { validItems, type Commands, type Tally } from '../infra/commands.ts'
 import { CommentSchema, IssueSchema, isHumanLogin, reviewPlace, type GithubComment } from './github-trigger.ts'

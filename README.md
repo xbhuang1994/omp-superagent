@@ -1,38 +1,117 @@
-# dsh-superagent
+# omp-superagent
 
-> **Research prototype for reference only, not an official DeepSeek product.** This code grew out of our team's day-to-day development work, with much of the engineering done by coding agents. Treat it as research code, not production-ready software. It may still contain bugs, and its coding style and engineering practices may be inconsistent. Review and adapt it before using it in your own environment.
->
-> We have adapted it for publication, so it is not identical to our internal version or the implementation described in *Exploring Super-agent Design: Towards a More Autonomous Agent System*. Some designs discussed in the article are directions for future development and are not implemented in this prototype.
+`omp-superagent` is a standalone coding agent for one GitHub repository. It receives GitHub events, evaluates them under a Policy, and runs each authorized Ticket in a persistent [Oh My Pi](https://github.com/can1357/oh-my-pi) worker Session and its own directory. The orchestrator then replies in the original Issue or pull-request conversation.
 
-dsh-superagent is a proactive coding agent for one GitHub repository, packaged as a bundle for [DeepSeek Harness](https://www.deepseek.com/en/harness/). It listens to GitHub and, optionally, Feishu. When someone allowed asks the agent for work, it opens a work item, works on it in its own agent session and directory, and answers in the original conversation, for example with a pull request. A web panel shows what needs a person.
+## Runtime contract
 
-It is also a way of working with an agent: **take as little human attention as possible, and give as much value as possible.** An agent that can act for a whole team can also waste a whole team's attention, so it acts only when asked or when a rule the team wrote allows it, and speaks only when someone must act or can use a result. [docs/000-philosophy.md](docs/000-philosophy.md) explains the principle and what it asks of the operator.
+- One persistent OMP orchestrator Session routes and evaluates.
+- One persistent OMP worker Session per Ticket executes and reports.
+- SQLite stores domain state, durable effects and outbox order. OMP JSONL stores transcripts and idempotent message IDs.
+- GitHub is the only Source. Feishu, a web panel, DSH hosting, online settings/Prompt editing, worker subagents and async background jobs are not included.
 
-## Setup
+## Usage
 
-Setup has many steps, so an agent does it with you. Ask your coding agent:
+### 1. Prerequisites
 
-> Read SETUP.md in this repository and set up dsh-superagent with me.
+- Bun `>=1.4.4` and git `>=2.32`.
+- A dedicated GitHub account with push access to the target repository. Configure a `gh` wrapper for that account; do not use an operator's personal account.
+- An OMP provider in an isolated `agentDir`. Explicit models must exist in its `models.yml`; `null` selects the OMP default only for a new Session and preserves the restored selection after restart.
+- A new empty absolute `stateDir`. Existing DSH state, transcripts and non-schema-1 SQLite files are rejected, not migrated.
 
-It asks one short question at a time, shows the full plan once, and then installs and configures everything. [SETUP.md](SETUP.md) is what it follows.
+### 2. Create startup JSON
+
+Example `config.json`:
+
+```json
+{
+  "stateDir": "/srv/omp-superagent/state",
+  "agentDir": "/srv/omp-superagent/omp",
+  "sources": {
+    "github": {
+      "enabled": true,
+      "config": {
+        "repository": "owner/repo",
+        "cli": "/usr/local/bin/gh-agent",
+        "pollSeconds": 60
+      }
+    }
+  },
+  "policy": {
+    "sources": {
+      "github": {
+        "allowed": [{ "id": "your-github-login" }]
+      }
+    }
+  },
+  "eval": {
+    "mode": "observe",
+    "model": null
+  },
+  "executor": {
+    "model": null,
+    "maxWorkers": 3,
+    "prepare": "git clone --quiet /srv/repositories/repo \"$OMP_SUPERAGENT_DIR\""
+  }
+}
+```
+
+`agentDir` defaults to `<stateDir>/omp`. Startup JSON is the only runtime settings source; edit it and restart to apply changes. `eval.mode` is `off`, `observe`, or `auto`: `observe` evaluates proactive candidates without accepting them, while `auto` accepts bounded matches. Explicit requests always require a whitelisted sender.
+
+Role models accept `null` or `{ "provider": "...", "model": "...", "thinkingLevel": "low" }`. Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown explicit models fail startup; no fallback model is selected silently.
+
+### 3. Build and start
+
+```sh
+git clone <this-repository> omp-superagent
+cd omp-superagent
+bun install
+bun run build
+./lib/cli.js --config /absolute/path/config.json
+```
+
+The CLI validates JSON, models, GitHub identity and repository push access before starting watchers. `SIGINT` and `SIGTERM` stop watchers, Sessions and Effects, restore the environment, close SQLite and release the state lock. `bun start -- --config /absolute/path/config.json` is equivalent after build.
+
+### 4. Use the agent
+
+From a whitelisted GitHub account, mention the agent in an Issue or PR:
+
+```text
+@<agent-login> Fix the README typo
+```
+
+The service creates one Ticket and worker, acknowledges the request, executes in the Ticket directory and posts the result in the original conversation. Each Ticket has its own persistent worker Session and isolated working directory. Do not delete SQLite or JSONL between runs: they prevent duplicate messages after restart.
+
+State layout:
+
+- `orchestrator.sqlite`: domain state, durable Effects and Outbox.
+- `sessions/`: orchestrator and worker JSONL transcripts.
+- `omp/`: OMP authentication, models and cache.
+- `work/`: default Ticket directories.
+- `worker-bin`, `worker-gitconfig`: command shims and isolated git configuration.
+
+### 5. Verify and troubleshoot
+
+```sh
+bun run check
+bun scripts/omp-smoke.ts lib/cli.js
+./lib/cli.js --config /does/not/exist.json
+```
+
+The offline smoke drives a real CLI through a loopback provider and fake `gh`, asserting Ticket completion, the worker output file, both JSONL transcripts, one acknowledgement/result and no restart duplicates. The last command must fail nonzero and name the missing path. See [docs/006-deployment.md](docs/006-deployment.md) for the full schema and [SETUP.md](SETUP.md) for a short checklist.
+
+## Development
+
+`bun run check` runs TypeScript, all Vitest suites and the build. `bun scripts/omp-smoke.ts lib/cli.js` runs the real CLI against a loopback OpenAI-compatible provider, fake `gh` and a temporary git repository, then verifies completion and restart idempotency.
 
 ## Documentation
-
-Read the numbered documents in order; each builds only on the ones before it.
 
 - [000 Philosophy](docs/000-philosophy.md)
 - [001 Domain model](docs/001-domain.md)
 - [002 Authorization](docs/002-authorization.md)
 - [003 Execution](docs/003-execution.md)
 - [004 Prompts](docs/004-prompts.md)
-- [005 Panel](docs/005-panel.md)
-- [006 Deployment](docs/006-deployment.md): manual setup, configuration, upgrades and troubleshooting
+- [006 Deployment](docs/006-deployment.md)
 - [007 Architecture](docs/007-architecture.md)
-- [008 Cookbook](docs/008-cookbook.md): adding a Source
-
-## Development
-
-`pnpm check` runs the typecheck, the tests and the build.
 
 ## License
 

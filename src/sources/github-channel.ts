@@ -1,5 +1,5 @@
 /** GitHub outbound channel: posts issue/PR comments and review thread replies under the agent account. */
-import { z } from 'zod'
+import z from 'zod'
 import type { OutboundMessage } from '../core/index.ts'
 import { CliError } from '../infra/commands.ts'
 import { sameName } from '../infra/text.ts'
@@ -31,7 +31,7 @@ export async function sendGithub(host: Pick<SourceContext, 'commands'>, message:
       rootId = source ? source.in_reply_to_id ?? source.id : undefined
     }
     const path = rootId === undefined ? `issues/${number}/comments` : `pulls/${number}/comments`
-    const marker = `<!-- dsh-superagent:${message.id} -->`
+    const marker = `<!-- omp-superagent:${message.id} -->`
     const mine = (comment: z.infer<typeof CommentSchema>) => sameName(comment.user?.login ?? '', github.login)
       && (rootId === undefined || comment.in_reply_to_id === rootId) && (comment.body ?? '').includes(marker)
     if ((await commands.pages(CommentSchema, path)).some(mine)) return 'sent'

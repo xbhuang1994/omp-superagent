@@ -1,6 +1,5 @@
 /** Proactive candidate assessment for the main Session: relays candidate cards, serves bounded context reads, and records outcomes. */
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import { z } from 'zod'
+import z from 'zod'
 import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Candidate, type EngineForMainSession,
   type Trigger } from '../core/index.ts'
 import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, directionAllowed, type Settings } from '../policy.ts'
@@ -38,9 +37,7 @@ const TRIGGER_CHARS = 4000, NEAR_CHARS = 1200, WINDOW_CHARS = 400, STUB_CHARS = 
 const FINISHED = 'This assessment has finished: it was decided, timed out or restarted'
 const EXPLICIT = 'This is an explicit request, which is routed instead of assessed: use orchestrator_route with its trigger_id and kind accept, attach, stop or ignore'
 type AssessmentContext = Awaited<ReturnType<typeof admissionContext>>
-type ReadCache = {
-  snapshots: Map<string, string>; images: Map<string, { id: string; text: string }>; messages: Map<string, string>; cursors: Set<string>
-}
+type ReadCache = { snapshots: Map<string, string>; messages: Map<string, string>; cursors: Set<string> }
 /** Per-evaluation state kept while an Eval runs: served reads cache, loaded thread context (or error), and any in-flight initial load. */
 interface EvalReads { cache: ReadCache; context?: AssessmentContext; error?: string; loading?: Promise<void> }
 /** Message returned when assessing a Trigger whose Source provides no thread context. */
@@ -66,17 +63,15 @@ export interface AssessorHost {
 /** Schema for bounded context or repository read requests during an active evaluation (`orchestrator_eval_read`). */
 export const EvalReadSchema = z.object({
   trigger_id: z.string().min(1).describe('Original candidate ID returned by orchestrator_eval; every reference is scoped to this trigger.'),
-  resource: z.enum(['message', 'root', 'parent', 'thread', 'file', 'directory', 'image']),
+  resource: z.enum(['message', 'root', 'parent', 'thread', 'file', 'directory']),
   path: z.string().optional().describe('Repository-relative path, only for file/directory.'),
   message_id: z.string().optional().describe('Only for message: omit for the trigger, or the id of a window message or stub.'),
   cursor: z.string().optional().describe('Only for thread: omit on the first page, then the next_cursor of the window or the cursor of next_read. Never a thread or message ID.'),
-  image_id: z.string().optional().describe('Only for image: an image id the window or a read lists.'),
-  offset: z.number().int().min(0).default(0).describe('Text pagination: copy next_offset; keep the other arguments unchanged. Images use 0.'),
+  offset: z.number().int().min(0).default(0).describe('Text pagination: copy next_offset; keep the other arguments unchanged.'),
 }).strict().superRefine((read, ctx) => {
   if ((read.resource === 'file' || read.resource === 'directory') !== (read.path !== undefined)) ctx.addIssue({ code: 'custom', message: 'path is required only for file/directory. To read the source/root/parent, use resource=message/root/parent without a path.' })
-  if (read.message_id !== undefined && read.resource !== 'message') ctx.addIssue({ code: 'custom', message: 'message_id is only for message; use returned image_id for images.' })
+  if (read.message_id !== undefined && read.resource !== 'message') ctx.addIssue({ code: 'custom', message: 'message_id is only for message.' })
   if (read.cursor !== undefined && read.resource !== 'thread') ctx.addIssue({ code: 'custom', message: 'cursor is only for thread. First page: {resource:"thread"}.' })
-  if ((read.resource === 'image') !== (read.image_id !== undefined)) ctx.addIssue({ code: 'custom', message: 'Images require image_id from a returned read reference. Read the thread or root first to discover their images.' })
 })
 /** Validated arguments for `MasterAssessor.read`. */
 export type EvalRead = z.infer<typeof EvalReadSchema>
@@ -114,26 +109,16 @@ export class MasterAssessor implements Assessor {
     const trigger = candidate.triggers.find(item => item.id === triggerId)!
     return { candidate, trigger }
   }
-  /** Returns or initializes the read cache for `evalId`, seeded with the trigger's own message and image references; throws if `evalId` has finished. */
   private reads(evalId: string, trigger: Trigger): EvalReads {
     let reads = this.evals.get(evalId)
     if (!reads) {
-      // Reject reads after the evaluation ends so completed evaluations do not retain cached state.
       if (!this.live(evalId, trigger)) throw new Error(FINISHED)
       const context = this.host.threadContext(trigger)
       const messages = new Map([[context?.messageId ?? '', trigger.text]])
-      reads = { cache: { snapshots: new Map(), images: new Map(), messages, cursors: new Set() } }
+      reads = { cache: { snapshots: new Map(), messages, cursors: new Set() } }
       this.evals.set(evalId, reads)
-      this.imageReferences(context, trigger, trigger.text, context?.messageId ?? '', reads.cache)
     }
     return reads
-  }
-  private imageReferences(context: TriggerContext | undefined, trigger: Trigger, text: string, messageId: string, cache: ReadCache) {
-    return (context?.images(text) ?? []).map(imageKey => {
-      const imageId = `${messageId}/${imageKey}`
-      cache.images.set(imageId, { id: messageId, text })
-      return { message_id: messageId, image_key: imageKey, read: { trigger_id: trigger.id, resource: 'image', image_id: imageId } }
-    })
   }
   /** Loads and caches the initial bounded thread window once per evaluation (including after a host restart). */
   private async seed(evalId: string, trigger: Trigger, caller?: AbortSignal): Promise<void> {
@@ -149,18 +134,15 @@ export class MasterAssessor implements Assessor {
       // Defer start until `reads.loading` is assigned below so `current()` holds from the first step.
       loading = Promise.resolve().then(async () => {
         try {
-          const timeout = AbortSignal.timeout(this.host.deployment.admissionContextTimeoutMs.get())
+          const timeout = AbortSignal.timeout(this.host.deployment.admissionContextTimeoutMs)
           const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : []), timeout])
           const commands = this.host.commands.withSignal(signal)
-          const context = await admissionContext(thread, commands, this.host.deployment.admissionContextMaxPages.get())
+          const context = await admissionContext(thread, commands, this.host.deployment.admissionContextMaxPages)
           if (!current()) return
           reads.context = context
           // Allow pagination to continue from the end of the initial window.
           if (context.next) reads.cache.cursors.add(context.next)
-          for (const message of context.messages) if (!message.deleted) {
-            reads.cache.messages.set(message.id, message.text)
-            this.imageReferences(thread, trigger, message.text, message.id, reads.cache)
-          }
+          for (const message of context.messages) if (!message.deleted) reads.cache.messages.set(message.id, message.text)
         } catch (error) {
           caller?.throwIfAborted()
           if (current()) reads.error = `Thread context unavailable: ${String(error).slice(0, 300)}. Use orchestrator_eval_read before deciding based on missing context.`
@@ -185,9 +167,6 @@ export class MasterAssessor implements Assessor {
     await this.seed(candidate.evalId, trigger, signal)
     const { context, error } = this.evals.get(candidate.evalId) ?? {}
     const source = this.host.threadContext(trigger)
-    const images = (text: string) => source?.images(text) ?? []
-    const imageIds = (id: string, text: string) => { const keys = images(text); return keys.length
-      ? { images: keys.map(key => `${id}/${key}`) } : {} }
     const cut = (text: string, limit: number) => text.length <= limit ? { text } : { text: `${text.slice(0, limit)}…`, chars: text.length }
     const thread = context ? (() => {
       const shown = new Map(context.window.entries.map(entry => [entry.message.id, entry]))
@@ -199,7 +178,7 @@ export class MasterAssessor implements Assessor {
         // The trigger's own text is already included once at the top level.
         if (index === at) return { ...author, at: message.at, trigger: true }
         const near = at >= 0 && Math.abs(index - at) <= 2
-        return { ...author, at: message.at, ...cut(message.text, near ? NEAR_CHARS : WINDOW_CHARS), ...imageIds(message.id, message.text) }
+        return { ...author, at: message.at, ...cut(message.text, near ? NEAR_CHARS : WINDOW_CHARS) }
       })
       return { complete: context.complete, loaded_messages: context.messages.length, source_found: context.window.source_found,
         ...context.next ? { next_cursor: context.next } : {}, messages }
@@ -207,9 +186,8 @@ export class MasterAssessor implements Assessor {
     const settings = this.host.settings()
     const others = candidate.triggers.filter(item => item.id !== trigger.id)
     return { trigger_id: trigger.id, strength: candidate.strength, mode: settings.eval.mode,
-      source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
-        ? { url: trigger.url } : {}) },
-      ...cut(trigger.text, TRIGGER_CHARS), ...imageIds(source?.messageId ?? '', trigger.text),
+      source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url ? { url: trigger.url } : {}) },
+      ...cut(trigger.text, TRIGGER_CHARS),
       ...others.length ? { batch: others.map(item => {
         const text = cut(item.text, WINDOW_CHARS)
         return { trigger_id: item.id, actor: item.actor.id, at: item.at, ...text, ...'chars' in text ? { read: `trigger/${item.id}` } : {} }
@@ -218,25 +196,12 @@ export class MasterAssessor implements Assessor {
       ...relatedTickets(candidate.tickets), policy_version: candidate.policyVersion,
       thread }
   }
-  /**
-   * Serves bounded paginated text or image attachments from the evaluation's thread context or repository for
-   * `orchestrator_eval_read`; `agent` is the main Session, which receives images as attachments.
-   */
-  async read(agent: Agent, read: EvalRead, signal: AbortSignal) {
+  /** Serves bounded paginated text from the evaluation's thread context or repository. */
+  async read(_sessionId: string, read: EvalRead, signal: AbortSignal) {
       const { candidate, trigger } = this.evalFor(read.trigger_id)
       await this.seed(candidate.evalId, trigger, signal)
-      const { cache } = this.reads(candidate.evalId, trigger)
-      const { snapshots, images, messages, cursors } = cache
+      const { snapshots, messages, cursors } = this.reads(candidate.evalId, trigger).cache
       const commands = this.host.commands.withSignal(AbortSignal.any([this.controller.signal, signal]))
-      if (read.resource === 'image') {
-        if (read.offset !== 0) throw new Error('Images are not paginated; use offset 0')
-        const image = images.get(read.image_id!)
-        if (!image) throw new Error('Unknown image reference. Read the source/root/thread for this trigger first and copy its image read arguments.')
-        const source = this.host.threadContext(trigger)
-        if (!source) throw new Error(NO_CONTEXT)
-        const key = read.image_id!.slice(read.image_id!.indexOf('/') + 1)
-        return source.image(agent, commands, image, key, this.host.deployment.stateDir, signal)
-      }
       const cacheKey = JSON.stringify([read.resource, read.path, read.cursor, read.message_id])
       if (read.offset > 0) {
         const cached = snapshots.get(cacheKey)
@@ -254,13 +219,10 @@ export class MasterAssessor implements Assessor {
         if (!source) throw new Error(NO_CONTEXT)
         if (read.cursor !== undefined && !cursors.has(read.cursor)) throw new Error('Unknown thread cursor. First call {resource:"thread"}; then copy the returned next_read exactly.')
         const result = await source.read(commands, read.resource, read.cursor)
-        const references = result.messages.filter(message => !message.deleted).flatMap(message => {
-          messages.set(message.id, message.text)
-          return this.imageReferences(source, trigger, message.text, message.id, cache)
-        })
+        for (const message of result.messages) if (!message.deleted) messages.set(message.id, message.text)
         if (result.next) cursors.add(result.next)
         const next = result.next ? { trigger_id: trigger.id, resource: 'thread', cursor: result.next } : null
-        body = JSON.stringify({ images: references, next_read: next, ...result.body })
+        body = JSON.stringify({ next_read: next, ...result.body })
       }
       else {
         body = await readRepositoryPath(commands, read.path!, read.resource === 'directory' ? 'directory' : 'file')

@@ -1,5 +1,5 @@
 /** Pull request binding, lifecycle observation, and terminal IM notification helpers. */
-import { z } from 'zod'
+import z from 'zod'
 import { key, liveTicket, type Follow, type OutboundMessage, type ThreadFact, type Ticket } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import { sameName } from '../infra/text.ts'
@@ -40,7 +40,7 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const opened = agentPull(pr, ctx.deployment) && ticketBranch(ticket, pr.head.ref)
   if (!started && !opened) {
     const { login } = ctx.deployment.github
-    return `PR does not belong to this ticket: use the source PR or a PR by ${login} from a branch whose last path segment is DSH_SUPERAGENT_NAME; omit pr_number when no PR exists`
+    return `PR does not belong to this ticket: use the source PR or a PR by ${login} from a branch whose last path segment is OMP_SUPERAGENT_NAME; omit pr_number when no PR exists`
   }
   const owner = ctx.tickets.open().find(item => pullsOf(item, true).includes(pr.number))
   if (owner && owner.id !== ticketId) return 'PR already belongs to another active ticket'

@@ -1,5 +1,5 @@
 /** Shared tool primitives and schemas for the main and executor Sessions. */
-import { z } from 'zod'
+import z from 'zod'
 import { IM_WORDS, wordCount } from '../../infra/text.ts'
 import { resourceGrammar } from '../resources.ts'
 

@@ -1,6 +1,6 @@
 # 000 Philosophy
 
-dsh-superagent is a framework, and also a way of working with an agent. Its core principle:
+omp-superagent is a framework, and also a way of working with an agent. Its core principle:
 
 **Take as little human attention as possible, and give as much value as possible.**
 

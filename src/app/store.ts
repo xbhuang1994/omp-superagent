@@ -6,7 +6,7 @@ import { key, threadKey, type ChannelRef, type Decision, type OutboundMessage, t
   type ThreadFacts, type Ticket, type Trigger, type TriggerDisposition } from '../core/index.ts'
 import { KV, type Family, type Key } from '../kv.ts'
 import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave } from '../policy.ts'
-import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, tooOld } from './migration.ts'
+export const SCHEMA_VERSION = 1
 import { Versions } from './versions.ts'
 import { storeReads } from './store-read.ts'
 
@@ -42,19 +42,9 @@ const SETS: Record<string, Record<string, string>> = {
   outbox: { dropped: "TEXT AS (value ->> '$.dropped.at')", pending: `TEXT AS (CASE WHEN value ->> '$.status' = 'pending'
     AND value ->> '$.ticketId' IS NOT NULL THEN (value ->> '$.ticketId') || ' ' || (value ->> '$.channel.thread') END)` },
 }
-export { SCHEMA_VERSION }
-/**
- * SQLite backing store implementing domain `Repositories`, view read queries, versioned settings, outbox receipts, and key-value state.
- * The Runtime opens it after locking the state directory and automatically migrates supported older schemas on startup.
- * The Engine mutates domain aggregates inside `atomic` transactions while Sources, views, and the Outbox read state or update their own records.
- */
+/** SQLite persistence for domain state. Only new schema 1 databases are supported; DSH state is never migrated. */
 export class Store implements Repositories {
   readonly db: DatabaseSync
-  /**
-   * Opens or creates the SQLite database at `path`, migrating schema 10 to schema 11 in a single transaction.
-   * @param report - Receives errors thrown by `afterCommit` callbacks without failing the committed transaction.
-   * @throws When the database schema is older than `OLDEST_SCHEMA` (10), newer than `SCHEMA_VERSION` (11), or when migration fails; in every case the database file is left unchanged and the SQLite handle is closed so a later attempt in the same process can open it.
-   */
   constructor(path: string, private readonly report: (error: unknown) => void = () => {}) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
@@ -63,37 +53,30 @@ export class Store implements Repositories {
       chmodSync(path, 0o600)
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
       const version = this.get(KV.store.schema)
-      if (version !== undefined && version > SCHEMA_VERSION) throw new Error(`Unsupported orchestrator database version ${version}`)
-      if (version !== undefined && version < OLDEST_SCHEMA) throw new Error(tooOld(version))
-      const migrating = version !== undefined && version < SCHEMA_VERSION
-      try {
-        this.atomic(() => {
-          this.db.exec(`
-            CREATE TABLE IF NOT EXISTS trigger (id TEXT PRIMARY KEY, value TEXT NOT NULL, at TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS disposition (id TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS thread (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS ticket (id TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS decision (id TEXT PRIMARY KEY, thread TEXT NOT NULL, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS trigger_thread (thread TEXT NOT NULL, id TEXT NOT NULL, at TEXT NOT NULL, human INTEGER NOT NULL,
-              PRIMARY KEY (thread, id));
-            CREATE TABLE IF NOT EXISTS effect (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, seq INTEGER NOT NULL,
-              generation INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', due INTEGER NOT NULL,
-              since TEXT NOT NULL, PRIMARY KEY (kind, key));
-            CREATE INDEX IF NOT EXISTS trigger_at ON trigger(at);
-            CREATE INDEX IF NOT EXISTS trigger_thread_at ON trigger_thread(thread, at);
-            CREATE INDEX IF NOT EXISTS decision_thread ON decision(thread);
-            CREATE INDEX IF NOT EXISTS effect_due ON effect(kind, due, seq);
-          `)
-          this.addColumns()
-          if (migrating) migrateTo11(this)
-          if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
-        })
-      } catch (error) {
-        if (!migrating) throw error
-        const reason = error instanceof Error ? error.message : String(error)
-        throw new Error(`The orchestrator database is unchanged at schema ${version}: its migration to schema ${SCHEMA_VERSION} failed: ${reason}`, { cause: error })
+      if (version !== undefined && version !== SCHEMA_VERSION) {
+        throw new Error(`Unsupported orchestrator database schema ${version}; start with a new empty stateDir`)
       }
+      this.atomic(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS trigger (id TEXT PRIMARY KEY, value TEXT NOT NULL, at TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS disposition (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS thread (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS ticket (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS decision (id TEXT PRIMARY KEY, thread TEXT NOT NULL, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS trigger_thread (thread TEXT NOT NULL, id TEXT NOT NULL, at TEXT NOT NULL, human INTEGER NOT NULL,
+            PRIMARY KEY (thread, id));
+          CREATE TABLE IF NOT EXISTS effect (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, seq INTEGER NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', due INTEGER NOT NULL,
+            since TEXT NOT NULL, PRIMARY KEY (kind, key));
+          CREATE INDEX IF NOT EXISTS trigger_at ON trigger(at);
+          CREATE INDEX IF NOT EXISTS trigger_thread_at ON trigger_thread(thread, at);
+          CREATE INDEX IF NOT EXISTS decision_thread ON decision(thread);
+          CREATE INDEX IF NOT EXISTS effect_due ON effect(kind, due, seq);
+        `)
+        this.addColumns()
+        if (version !== SCHEMA_VERSION) this.set(KV.store.schema, SCHEMA_VERSION)
+      })
     } catch (error) {
       this.db.close()
       throw error

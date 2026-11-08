@@ -1,29 +1,25 @@
 /** Manages versioned role prompts, behavioral policies, and operational skills independently of access settings. */
-import { z } from 'zod'
+import z from 'zod'
 import { UserError, key } from '../core/index.ts'
 import { policyVersion, type Settings, type SettingsOrigin } from '../policy.ts'
 import { masterPrompt, workerPrompt, sharedPrompt, guides, mainAdmissionPolicy, handoffPolicy, teamDefaults, sourceSkills, cliNotes } from './context.ts'
 import { environmentLines, type Variable } from './execution-environment.ts'
-import { promptsNotice } from './notices.ts'
-import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV } from '../kv.ts'
 
-/** Prompt sections the team writes; the built-in parts follow dsh-superagent's text until the team overrides them. */
+/** Prompt sections the team writes; built-in parts follow omp-superagent defaults until overridden. */
 export const TEAM_SECTIONS = ['communication', 'scope', 'delivery'] as const
 export type TeamSection = typeof TEAM_SECTIONS[number]
 /** Markdown headings for each team section; fixed prompt sections refer to them by these exact names. */
 const TEAM_HEADINGS: Record<TeamSection, string> = { communication: 'Communication', scope: 'Ticket scope', delivery: 'Delivery requirements' }
 export const SKILL_NAME = /^[a-z][a-z0-9-]*$/
-/** Prefix prepended to skill names when registering them in DSH Sessions. */
-export const SKILL_PREFIX = 'dsh-superagent-'
 const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.keys(sourceSkills) as string[]).includes(name),
   'This name belongs to a built-in skill')
 /** The built-in parts a team may override, by key: both roles' parts, the Source skills, and the generated parts' templates. */
 const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/subscriptions', 'runtime/replies',
   'runtime/dispatch', 'runtime/work', 'runtime/admission', 'runtime/handoff/orchestrator', 'runtime/handoff/worker', 'runtime/environment',
-  'runtime/policy', 'runtime/policy/none', 'skill/feishu', 'skill/github'] as const
+  'runtime/policy', 'runtime/policy/none', 'skill/github'] as const
 export type PartKey = typeof PART_KEYS[number]
 /** A team's text for a built-in part, and `base`, the key of the built-in text it was edited from. */
 const OverrideSchema = z.object({ text: z.string(),
@@ -65,7 +61,6 @@ export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts 
   'runtime/policy': { roles: MAIN, text: `${POLICY_HEAD} The enabled rules, by name and id:\n{rules}`, placeholders: ['{version}', '{mode}', '{rules}'] },
   'runtime/policy/none': { roles: MAIN, text: `${POLICY_HEAD} No rule is enabled: a proactive candidate can only be ignored.`,
     placeholders: ['{version}', '{mode}'] },
-  'skill/feishu': { roles: BOTH, text: `${sourceSkills.feishu}\n\n## CLI usage\n${cliNotes}` },
   'skill/github': { roles: BOTH, text: `${sourceSkills.github}\n\n## CLI usage\n${cliNotes}` },
 }
 /** The key of a built-in text, which an override's `base` records. */
@@ -82,7 +77,7 @@ const fill = (template: string, values: Record<string, string>): string =>
 /** The execution environment part: its template with the variables, or, while setup waits, that it waits. */
 export function environmentSection(config: PromptConfig, variables: Variable[] | undefined): string {
   return variables ? fill(builtIn(config, 'runtime/environment'), { variables: environmentLines(variables) })
-    : 'Execution environment: dsh-superagent is waiting for setup; the management panel names what is missing.'
+    : 'Execution environment: omp-superagent startup configuration is incomplete.'
 }
 /**
  * The main Session's Policy section: the Policy version and accept mode it judges proactive candidates by, and every enabled
@@ -118,7 +113,7 @@ export function composePrompt(config: PromptConfig, role: Role, environment?: st
   return promptParts(config, role, environment, policy).map(part => part.text).join('\n\n')
 }
 export function composeSkill(config: PromptConfig, name: string): string {
-  return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
+  return name === 'github' ? builtIn(config, 'skill/github') : config.skills[name] ?? ''
 }
 
 /** An override whose built-in text changed since its `base`, with that text when kept, or whose part this version no longer has. */
@@ -134,17 +129,12 @@ export class PromptConflict extends Error {}
  */
 export class Prompts {
   private readonly versions: Versions<PromptVersion>
-  constructor(private readonly store: Store, private readonly maxChars: () => number, private readonly environment: () => Variable[] | undefined,
-    private readonly feishu: () => boolean) {
+  constructor(private readonly store: Store, private readonly maxChars: () => number, private readonly environment: () => Variable[] | undefined) {
     this.versions = new Versions(store, KV.prompts.revision, KV.prompts.version)
   }
-  /** A role's prompt; the main Session's Policy section follows the settings as they are now, at each model request. */
+  /** A role's full prompt from the selected stored version. */
   compose(config: PromptConfig, role: Role, variables = this.environment()): string {
     return composePrompt(config, role, environmentSection(config, variables), role === 'orchestrator' ? policySection(this.store.settings(), config) : undefined)
-  }
-  /** Returns skills to register in every Session: built-in Source skills (`feishu` only when a Feishu bot is configured) followed by team skills. */
-  skills(config: PromptConfig): [string, string][] {
-    return [...this.feishu() ? ['feishu'] : [], 'github', ...Object.keys(config.skills)].map(name => [name, composeSkill(config, name)])
   }
   current(): PromptVersion {
     const revision = this.versions.revision()
@@ -197,7 +187,7 @@ export class Prompts {
     const environment = environmentSection(config, this.environment()), policy = policySection(this.store.settings(), config)
     return { orchestrator: composePrompt(config, 'orchestrator', environment, policy), worker: composePrompt(config, 'worker', environment),
       parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy), worker: promptParts(config, 'worker', environment) },
-      skills: Object.fromEntries(this.skills(config)), scope: 'Team sections, skills, and overrides of built-in parts, which follow their built-in text until overridden. Workers additionally inherit the host prompt and repository AGENTS.md. Prompt text changes what the agents are told, not what dsh-superagent allows: tool permissions, the gate and account wrappers stay.' }
+      skills: { github: composeSkill(config, 'github'), ...config.skills }, scope: 'Team sections, skills, and overrides of built-in parts. Workers retain repository AGENTS.md. Prompt text does not change omp-superagent authorization, tool permissions, or account wrappers.' }
   }
   save(value: unknown, baseRevision: number, source: SettingsOrigin): PromptVersion {
     const config = this.validate(value)
@@ -234,14 +224,4 @@ export class Prompts {
     })
     return { revisions, next_offset: offset + revisions.length <= current.revision ? offset + revisions.length : null }
   }
-}
-/** Save a new prompt revision and notify the main Session when the change originated outside its own tool call. */
-export async function savePrompts(host: { store: Pick<Store, 'atomic'>; prompts: Pick<Prompts, 'save'>; sessions: Pick<Sessions, 'notify' | 'delivery'> },
-  config: unknown, baseRevision: number, origin: SettingsOrigin) {
-  const version = host.store.atomic(() => {
-    const saved = host.prompts.save(config, baseRevision, origin)
-    if (origin !== 'tool') host.sessions.notify(...promptsNotice(saved.revision))
-    return saved
-  })
-  return { revision: version.revision, effect: 'next-request' as const, context_delivery: await host.sessions.delivery('prompts') }
 }

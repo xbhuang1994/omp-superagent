@@ -1,6 +1,5 @@
 /** Main-session assessor per-eval state and context loading. */
 import { expect, it, vi } from 'vitest'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AssessmentSchema, EvalReadSchema, MasterAssessor, type AssessorHost } from '../src/app/assessment.ts'
 import { mainAdmissionPolicy } from '../src/app/context.ts'
 import { Engine, MemoryRepositories, type Executor, type Policy, type Trigger } from '../src/core/index.ts'
@@ -49,12 +48,11 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   const outbox = { send: () => {}, status: () => undefined, withdraw: () => {} }
   engine = new Engine({ repo, policy: () => policy, scope, assessor, executor, outbox })
   const tools: Record<string, (args: unknown, signal: AbortSignal) => Promise<unknown>> = {}
-  tools.orchestrator_eval_read = (args, signal) => assessor.read({} as Agent, EvalReadSchema.parse(args), signal)
   tools.orchestrator_eval_decide = (args, signal) => {
     const { trigger_id, ...result } = args as { trigger_id: string }
     return assessor.decide(trigger_id, AssessmentSchema.parse(result), signal)
   }
-  // Per-Eval state retained by the assessor and released when the Eval ends.
+  tools.orchestrator_eval_read = (args, signal) => assessor.read('orchestrator-test', EvalReadSchema.parse(args), signal)
   const kept = assessor as unknown as { evals: Map<string, unknown> }
   const size = () => kept.evals.size
   return { repo, engine, assessor, tools, size, gate }

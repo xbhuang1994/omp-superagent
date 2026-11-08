@@ -15,6 +15,13 @@ let directory: string
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'orchestrator-store-')) })
 afterEach(() => { rmSync(directory, { recursive: true, force: true }) })
 
+it('refuses a DSH or otherwise non-schema-1 database and requires a new stateDir', () => {
+  const path = join(directory, 'orchestrator.sqlite')
+  const store = new Store(path); store.close()
+  const db = new DatabaseSync(path); db.prepare("UPDATE kv SET value='0' WHERE key='schema'").run(); db.close()
+  expect(() => new Store(path)).toThrow('new empty stateDir')
+})
+
 it('refuses databases newer than this build and rolls back failed atomic work', () => {
   const path = join(directory, 'orchestrator.sqlite')
   const store = new Store(path)
@@ -185,7 +192,7 @@ it('closes a database it cannot open as this version\'s, so a later attempt can 
   store.close()
   const close = vi.spyOn(DatabaseSync.prototype, 'close')
   try {
-    expect(() => new Store(path)).toThrow('Unsupported orchestrator database version')
+    expect(() => new Store(path)).toThrow('Unsupported orchestrator database schema')
     expect(close).toHaveBeenCalledOnce()
   } finally { close.mockRestore() }
 })

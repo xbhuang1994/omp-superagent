@@ -1,6 +1,6 @@
 /**
  * In-memory LRU cache bounded by total UTF-16 code units, always retaining the most recently inserted entry.
- * Runtime uses separate instances to cache paginated resource snapshots for `orchestrator_read` and resolved Feishu message links for search and cards.
+ * Runtime caches paginated resource snapshots for orchestrator_read.
  */
 export class TextCache {
   private readonly texts = new Map<string, string>()

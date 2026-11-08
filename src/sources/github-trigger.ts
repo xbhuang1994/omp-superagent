@@ -1,5 +1,5 @@
 /** Normalizes GitHub issues, pull requests, comments, reviews, and CI transitions into domain Triggers. */
-import { z } from 'zod'
+import z from 'zod'
 import { key, type ChannelRef, type Trigger } from '../core/index.ts'
 import { escapeRegExp, sameName } from '../infra/text.ts'
 

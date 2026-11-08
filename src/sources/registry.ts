@@ -111,15 +111,7 @@ export class SourceRegistry implements SourceScope {
     const context = kind?.threadContext
     if (!kind || !context) return undefined
     const { config } = this.resolve(kind, settings.sources[kind.kind])
-    return {
-      messageId: context.messageId(trigger),
-      read: (commands, part, cursor) => context.read(commands, trigger, part, cursor, config),
-      images: text => context.images?.(text) ?? [],
-      image: async (agent, commands, message, key, stateDir, signal) => {
-        if (!context.image) throw new Error(`The ${kind.kind} Source has no images`)
-        return context.image(agent, commands, trigger, message, key, stateDir, signal)
-      },
-    }
+    return { messageId: context.messageId(trigger), read: (commands, part, cursor) => context.read(commands, trigger, part, cursor, config) }
   }
   scope(input: { source: string; meta: Record<string, unknown> }, settings = this.settings()): ScopeResult {
     const kind = this.kinds.get(input.source)
