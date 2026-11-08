@@ -100,7 +100,7 @@ export class Runtime implements SourceHost {
         },
         tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, sessionId) })
       this.wechat = new WeChatBridge({ store, sessions, masterId })
-      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat)
+      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator())
       this.executor = new OMPExecutor({ get engine() { return runtime.engine }, store, effects, health: this.board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
@@ -153,6 +153,10 @@ export class Runtime implements SourceHost {
   ticketEnvironment(ticket: Ticket): Variable[] {
     const trigger = sourceTrigger(this, ticket)
     return ticketEnvironment({ deployment: this.deployment, sources: this.sources, settings: this.store.settings(), ticket, ...trigger ? { trigger } : {} })
+  }
+  async resetOrchestrator(): Promise<void> {
+    await this.sessions.resetOrchestrator()
+    this.wechat.rebind()
   }
   receive(trigger: Trigger): ReceiveResult { return this.passes.receive(trigger) }
   idle(): Promise<void> { return this.passes.idle() }

@@ -66,7 +66,7 @@ export function ompTool<S extends z.ZodType>(tool: Tool<S>): CustomTool {
   }
 }
 export interface OMPSessionsHost {
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'get' | 'set' | 'delete'>
   readonly prompts: Pick<Prompts, 'current' | 'compose'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   readonly engine: Pick<EngineForExecutor, 'inputsDelivered' | 'inputsRead'>
@@ -119,9 +119,8 @@ export class OMPSessions {
     if (current) return current
     const existing = this.loading.get(sessionId)
     if (existing) return existing
-    const opening = this.open(sessionId, cwd, title, role, ticket).catch(error => {
+    const opening = this.open(sessionId, cwd, title, role, ticket).finally(() => {
       this.loading.delete(sessionId)
-      throw error
     })
     this.loading.set(sessionId, opening)
     return opening
@@ -297,6 +296,13 @@ export class OMPSessions {
     if (!ticket || !this.host.store.get(KV.sessions.files(workerSessionId(ticketId)))) return []
     const session = await this.ensure(workerSessionId(ticketId), ticket.execution?.directory ?? '', ticket.title, 'worker', ticket)
     return session.messages
+  }
+
+  /** Replace only the main Session with an empty persistent transcript; channel bindings and domain state survive. */
+  async resetOrchestrator(): Promise<void> {
+    await this.stop(this.host.masterId, 'Orchestrator Session reset')
+    this.host.store.delete(KV.sessions.files(this.host.masterId))
+    await this.ensure(this.host.masterId, this.host.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
   }
 
   async stop(sessionId: string, reason: string): Promise<void> {

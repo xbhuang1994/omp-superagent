@@ -44,12 +44,18 @@ export class WeChatBridge {
 
   status(): WeChatStatus { return { ...this.state } }
   async start(): Promise<void> {
-    this.unsubscribe ??= this.host.sessions.onReply(this.host.masterId, text => { this.sendReply(text) })
+    this.rebind()
     const account = this.host.store.get(KV.wechat.account)
     if (account) {
       this.state = { state: 'connected', message: '微信绑定已恢复。' }
       this.startMonitor(account)
     }
+  }
+
+  /** Reattach final-reply delivery after the main Session is replaced. */
+  rebind(): void {
+    this.unsubscribe?.()
+    this.unsubscribe = this.host.sessions.onReply(this.host.masterId, text => { this.sendReply(text) })
   }
   async stop(): Promise<void> {
     this.unsubscribe?.()

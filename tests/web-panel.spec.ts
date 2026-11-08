@@ -36,7 +36,7 @@ beforeEach(async () => {
   await sessions.ensure('main', dir, 'Main', 'orchestrator')
   wechat = new WeChatBridge({ store, sessions, masterId: 'main' })
   await wechat.start()
-  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat)
+  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat, async () => { await sessions.resetOrchestrator(); wechat.rebind() })
   await panel.start()
 })
 afterEach(async () => {
@@ -132,7 +132,7 @@ it('rejects invalid base64 and too many attachments', async () => {
 })
 
 it('accepts same-origin browser requests on a wildcard LAN listener', async () => {
-  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat)
+  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat, async () => { await sessions.resetOrchestrator(); wechat.rebind() })
   await lan.start()
   try {
     const url = lan.url.replace('0.0.0.0', '127.0.0.1')

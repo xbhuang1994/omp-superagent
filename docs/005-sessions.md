@@ -18,6 +18,8 @@ Application messages use hidden custom messages, never host inbox objects. Each 
 
 `transcript(ticketId)` returns OMP `AgentMessage[]`, supporting resource pagination/previews. `stopAll()` begins disposal on all loaded Sessions before awaiting any cleanup, preventing queued work from starting another turn.
 
+The Web panel's reset action disposes the current orchestrator, removes only its alias-to-JSONL mapping, and creates an empty Session under the same durable alias. Domain state, worker Sessions, attachments, and WeChat credentials/cursor survive. WeChat final-reply delivery is rebound to the replacement Session.
+
 ## Web and WeChat chat
 
 Visible chat messages use the same durable custom-entry delivery as other application messages. Web requests generate `web:<uuid>` IDs; WeChat uses `wechat:<message_id>` so redelivery after a crash cannot create another turn. Both use native image content, inline UTF-8 text, or durable files as appropriate.

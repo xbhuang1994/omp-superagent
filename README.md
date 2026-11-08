@@ -63,6 +63,8 @@ The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configura
 
 The panel's **连接微信** button creates a local QR code through Tencent's iLink Bot API. Scan and confirm with WeChat `>=8.0.70`; enter the phone verification code if requested. The bound WeChat user chats with the same persistent orchestrator Session, with text replies returned automatically and image/file/video attachments transferred through the encrypted WeChat CDN. The orchestrator can send a local file explicitly with `wechat_send_file`. Bindings and the long-poll cursor persist in `orchestrator.sqlite` and resume after restart; disconnecting removes only the binding and cursor, never the OMP transcript. Media is limited to 100 MiB per item.
 
+Use **重置 Session** to start an empty orchestrator conversation without removing tickets or the WeChat binding. The action requires confirmation; after reset, the next message starts a new OMP transcript.
+
 ### 3. Build and start
 
 ```sh

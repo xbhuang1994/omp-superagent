@@ -67,7 +67,8 @@ export class WebPanel {
   private server?: Server
   private actualPort = 0
   constructor(private readonly options: WebOptions, private readonly masterId: string,
-    private readonly sessions: Pick<OMPSessions, 'get' | 'chat'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>) {}
+    private readonly sessions: Pick<OMPSessions, 'get' | 'chat'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>,
+    private readonly resetSession: () => Promise<void>) {}
 
   get url(): string { return `http://${this.options.host}:${this.actualPort}/` }
 
@@ -98,6 +99,7 @@ export class WebPanel {
       const path = new URL(request.url ?? '/', this.url).pathname
       if (request.method === 'GET' && path === '/api/health') return this.json(response, 200, { ready: true })
       if (request.method === 'GET' && path === '/api/messages') return this.json(response, 200, { messages: this.messages() })
+      if (request.method === 'POST' && path === '/api/session/reset') { await this.resetSession(); return this.json(response, 200, { reset: true }) }
       if (request.method === 'GET' && path === '/api/wechat') return this.json(response, 200, this.wechat.status())
       if (request.method === 'POST' && path === '/api/wechat/connect') return this.json(response, 200, await this.wechat.connect())
       if (request.method === 'POST' && path === '/api/wechat/disconnect') return this.json(response, 200, await this.wechat.disconnect())
@@ -143,7 +145,7 @@ export class WebPanel {
       const text = messageText(message)
       if (!text) return []
       const source = message.role === 'custom' && message.details && typeof message.details === 'object' && 'source' in message.details ? message.details.source : undefined
-      const role = message.role === 'assistant' ? 'assistant' : message.role === 'custom' && source !== 'web-panel' ? 'event' : 'user'
+      const role = message.role === 'assistant' ? 'assistant' : message.role === 'custom' && source !== 'web-panel' && source !== 'wechat' ? 'event' : 'user'
       const at = 'timestamp' in message && typeof message.timestamp === 'number' ? message.timestamp : undefined
       const images = messageImages(message)
       const files = messageAttachments(message).filter(attachment => attachment.kind !== 'image')

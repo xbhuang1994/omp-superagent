@@ -115,7 +115,7 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     const protocol = new WeChatProtocol({ apiBaseUrl: wechatServer.base, cdnBaseUrl: `${wechatServer.base}cdn` })
     bridge = new WeChatBridge({ store, sessions, masterId: 'main' }, protocol)
     await bridge.start()
-    panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, bridge)
+    panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, bridge, async () => { await sessions.resetOrchestrator(); bridge!.rebind() })
     await panel.start()
 
     const connecting = await fetch(`${panel.url}api/wechat/connect`, { method: 'POST' })
@@ -144,6 +144,8 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     expect(transcript).not.toContain('不得投递')
     expect(JSON.stringify(provider.requests)).toContain('image_url')
     expect(sessions.get('main')?.messages.filter(message => message.role === 'custom' && JSON.stringify(message.details).includes('"requestId":"wechat:9007199254740993"'))).toHaveLength(1)
+    const panelMessages = await (await fetch(`${panel.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
+    expect(panelMessages.messages.find(message => message.text === '微信文本')?.role).toBe('user')
 
     const output = join(dir, 'out.bin')
     await writeFile(output, Buffer.from([0, 255, 1, 2, 3]))
@@ -163,6 +165,18 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     expect(wechatServer.updateCursors.at(-1)).toBe('cursor-1')
     expect(wechatServer.qrCount()).toBe(1)
     expect(bridge.status().state).toBe('connected')
+
+    const previousSession = sessions.get('main')
+    const reset = await fetch(`${panel.url}api/session/reset`, { method: 'POST' })
+    expect(reset.status).toBe(200)
+    expect(sessions.get('main')).not.toBe(previousSession)
+    expect((await (await fetch(`${panel.url}api/messages`)).json() as { messages: unknown[] }).messages).toEqual([])
+    const repliesBeforeReset = wechatServer.sent.length
+    await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: '重置后的消息' }) })
+    await vi.waitFor(() => {
+      expect(wechatServer.sent.length).toBeGreaterThan(repliesBeforeReset)
+      expect(wechatServer.sent.some(message => JSON.stringify(message).includes('orchestrator 微信回复'))).toBe(true)
+    }, { timeout: 5000 })
   } finally {
     await panel?.stop()
     await bridge?.stop()

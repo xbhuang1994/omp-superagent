@@ -10,6 +10,7 @@ const feedback = document.querySelector('#feedback')
 const fileInput = document.querySelector('#attachments')
 const attachmentList = document.querySelector('#attachment-list')
 const wechatButton = document.querySelector('#wechat-button')
+const resetSession = document.querySelector('#reset-session')
 const wechatModal = document.querySelector('#wechat-modal')
 const wechatMessage = document.querySelector('#wechat-message')
 const wechatQr = document.querySelector('#wechat-qr')
@@ -117,6 +118,21 @@ wechatVerify.addEventListener('submit', async event => {
     await wechatRequest('/api/wechat/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: wechatCode.value }) })
     wechatCode.value = ''
   } catch (error) { wechatMessage.textContent = error instanceof Error ? error.message : String(error) }
+})
+resetSession.addEventListener('click', async () => {
+  if (!window.confirm('确定重置 orchestrator Session？当前对话上下文将清空，微信绑定保留。')) return
+  resetSession.disabled = true
+  feedback.textContent = ''
+  try {
+    const response = await fetch('/api/session/reset', { method: 'POST' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || `重置失败 (${response.status})`)
+    rendered.clear()
+    transcript.replaceChildren()
+    empty.hidden = false
+    feedback.textContent = 'Session 已重置'
+  } catch (error) { feedback.textContent = error instanceof Error ? error.message : String(error) }
+  finally { resetSession.disabled = false }
 })
 
 function updateSend() { send.disabled = !textarea.value.trim() && selected.length === 0 }
