@@ -2,8 +2,9 @@
 import { AgentRegistry, ModelRegistry, SessionManager, Settings, createAgentSession, discoverAuthStorage, loadSkillsFromDir,
   type AgentSession, type AuthStorage, type CreateAgentSessionOptions, type CustomTool, type Skill } from '@oh-my-pi/pi-coding-agent'
 import { randomUUID } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import type { ImageContent, TextContent } from '@oh-my-pi/pi-ai'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { extname, join } from 'node:path'
 import z from 'zod'
 import { key, liveTicket, runningAssignment, type EngineForExecutor, type Ticket } from '../core/index.ts'
 import { mandateInstructions, workerSessionId } from '../executor/omp.ts'
@@ -25,6 +26,29 @@ const SESSION_SETTINGS = {
   'retry.enabled': true,
   'compaction.enabled': true,
 } as const
+export interface ChatAttachment { name: string; mediaType: string; data: string }
+type ChatContent = string | (TextContent | ImageContent)[]
+interface AttachmentMetadata { name: string; mediaType: string; kind: 'image' | 'text' | 'file'; path?: string }
+const IMAGE_TYPES: Record<string, string> = { 'image/png': 'image/png', 'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg', 'image/webp': 'image/webp', 'image/gif': 'image/gif' }
+const IMAGE_EXTENSIONS: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
+const TEXT_TYPES = /^(?:text\/|application\/(?:json|xml|yaml|x-yaml|javascript|typescript|x-sh|x-python|csv|sql|x-httpd-php)(?:;|$)|image\/svg\+xml(?:;|$))/
+const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.csv', '.tsv', '.log', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.css', '.html', '.htm', '.svg', '.py', '.sh', '.bash', '.zsh', '.sql', '.toml', '.ini', '.cfg', '.conf', '.env', '.rs', '.go', '.java', '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.php', '.rb', '.lua', '.vue', '.svelte'])
+const MAX_INLINE_TEXT_BYTES = 256 * 1024
+
+function imageType(attachment: ChatAttachment): string | undefined {
+  const declared = IMAGE_TYPES[attachment.mediaType]
+  if (declared) return declared
+  return !attachment.mediaType || attachment.mediaType === 'application/octet-stream' ? IMAGE_EXTENSIONS[extname(attachment.name).toLowerCase()] : undefined
+}
+function textContent(attachment: ChatAttachment, data: Buffer): string | undefined {
+  if (data.length > MAX_INLINE_TEXT_BYTES) return undefined
+  const extension = extname(attachment.name).toLowerCase()
+  const likelyText = TEXT_TYPES.test(attachment.mediaType) || TEXT_EXTENSIONS.has(extension)
+  if (!likelyText && data.includes(0)) return undefined
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(data) }
+  catch { return undefined }
+}
+function attribute(value: string): string { return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;') }
 
 /** Adapt an application Zod tool to OMP's JSON-Schema CustomTool contract. */
 export function ompTool<S extends z.ZodType>(tool: Tool<S>): CustomTool {
@@ -125,7 +149,7 @@ export class OMPSessions {
     const mandate = ticket ? mandateInstructions(ticket.mandate) : ''
     const customSystemPrompt = mandate ? `${composed}\n\n${mandate}` : composed
     const tools = this.host.tools(sessionId, ticket)
-    const toolNames = [...role === 'worker' ? ['read', 'bash', 'edit', 'write'] : [], ...tools.map(tool => tool.name)]
+    const toolNames = [...role === 'worker' ? ['read', 'bash', 'edit', 'write'] : ['read', 'bash'], ...tools.map(tool => tool.name)]
     const extensions: CreateAgentSessionOptions['extensions'] = role === 'worker' && ticket ? [pi => {
       pi.on('tool_call', () => {
         const current = this.host.store.tickets.get(ticket.id)
@@ -195,14 +219,42 @@ export class OMPSessions {
     this.bind(session, ticketId)
     await this.delivery.send(session, requestId, text, mode, this.host.lifetime, inputIds, authorize, accepted)
   }
-  /** Queue one local operator message with a durable request ID. */
-  async chat(sessionId: string, text: string): Promise<string> {
+  /** Queue one local operator message; use vision, inline text, or durable files according to each payload. */
+  async chat(sessionId: string, text: string, attachments: ChatAttachment[] = []): Promise<string> {
     const session = this.loaded.get(sessionId)
     if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
     const requestId = `web:${randomUUID()}`
+    const images: ImageContent[] = []
+    const rendered: string[] = []
+    const metadata: AttachmentMetadata[] = []
+    let directory: string | undefined
+    for (const [index, attachment] of attachments.entries()) {
+      const data = Buffer.from(attachment.data, 'base64')
+      const mediaType = imageType(attachment)
+      if (mediaType) {
+        images.push({ type: 'image', data: attachment.data, mimeType: mediaType })
+        metadata.push({ name: attachment.name, mediaType, kind: 'image' })
+        continue
+      }
+      const decoded = textContent(attachment, data)
+      if (decoded !== undefined) {
+        rendered.push(`<attachment name="${attribute(attachment.name)}">\n${decoded}\n</attachment>`)
+        metadata.push({ name: attachment.name, mediaType: attachment.mediaType || 'text/plain', kind: 'text' })
+        continue
+      }
+      directory ??= join(this.host.machine.stateDir, 'attachments', requestId.replaceAll(':', '-'))
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      const path = join(directory, `${index + 1}-${attachment.name}`)
+      await writeFile(path, data, { mode: 0o600 })
+      const storedType = attachment.mediaType || 'application/octet-stream'
+      rendered.push(`<attachment name="${attribute(attachment.name)}" mediaType="${attribute(storedType)}" path="${attribute(path)}">\nFile saved at the path above. Use read or bash to inspect or transform it as needed; do not execute it implicitly.\n</attachment>`)
+      metadata.push({ name: attachment.name, mediaType: storedType, kind: 'file', path })
+    }
+    const body = [text, ...rendered].filter(Boolean).join('\n\n') || '请查看附件。'
+    const content: ChatContent = [{ type: 'text', text: body }, ...images]
     this.bind(session)
-    await this.delivery.send(session, requestId, text, 'queue', this.host.lifetime, undefined, undefined, undefined,
-      { display: true, attribution: 'user', source: 'web-panel' })
+    await this.delivery.send(session, requestId, content, 'queue', this.host.lifetime, undefined, undefined, undefined,
+      { display: true, attribution: 'user', source: 'web-panel', attachments: metadata })
     return requestId
   }
 

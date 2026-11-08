@@ -7,7 +7,10 @@ const form = document.querySelector('#composer')
 const textarea = document.querySelector('#message')
 const send = document.querySelector('#send')
 const feedback = document.querySelector('#feedback')
+const fileInput = document.querySelector('#attachments')
+const attachmentList = document.querySelector('#attachment-list')
 const rendered = new Set()
+let selected = []
 
 function render(messages) {
   for (const message of messages) {
@@ -20,6 +23,24 @@ function render(messages) {
     const text = document.createElement('pre')
     text.textContent = message.text
     article.append(role, text)
+    for (const image of message.images ?? []) {
+      const figure = document.createElement('figure')
+      figure.className = 'attachment-image'
+      const img = document.createElement('img')
+      img.src = `data:${image.mediaType};base64,${image.data}`
+      img.alt = image.name
+      img.loading = 'lazy'
+      const caption = document.createElement('figcaption')
+      caption.textContent = image.name
+      figure.append(img, caption)
+      article.append(figure)
+    }
+    for (const file of message.files ?? []) {
+      const chip = document.createElement('span')
+      chip.className = 'attachment-chip attachment-file'
+      chip.textContent = `${file.name} · ${file.mediaType}`
+      article.append(chip)
+    }
     transcript.append(article)
   }
   empty.hidden = rendered.size > 0
@@ -40,26 +61,78 @@ async function refresh() {
   }
 }
 
+function updateSend() { send.disabled = !textarea.value.trim() && selected.length === 0 }
+function showSelected() {
+  attachmentList.replaceChildren()
+  selected.forEach((file, index) => {
+    const chip = document.createElement('span')
+    chip.className = 'attachment-chip'
+    chip.textContent = `${file.name} (${Math.ceil(file.size / 1024)} KiB)`
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.textContent = '移除'
+    remove.addEventListener('click', () => { selected.splice(index, 1); showSelected(); updateSend() })
+    chip.append(remove)
+    attachmentList.append(chip)
+  })
+  updateSend()
+}
+
+fileInput.addEventListener('change', async () => {
+  feedback.textContent = ''
+  const files = [...fileInput.files]
+  if (selected.length + files.length > 3) {
+    feedback.textContent = '最多选择 3 个附件'
+    fileInput.value = ''
+    return
+  }
+  if (files.some(file => file.size > 5 * 1024 * 1024)) {
+    feedback.textContent = '每个附件不能超过 5 MiB'
+    fileInput.value = ''
+    return
+  }
+  selected.push(...files)
+  fileInput.value = ''
+  showSelected()
+})
+textarea.addEventListener('input', updateSend)
+
+function base64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error)
+    reader.onload = () => resolve(reader.result.split(',', 2)[1])
+    reader.readAsDataURL(file)
+  })
+}
+
 form.addEventListener('submit', async event => {
   event.preventDefault()
   const text = textarea.value.trim()
-  if (!text) return
+  if (!text && selected.length === 0) return
   send.disabled = true
   feedback.textContent = ''
   try {
+    const attachments = await Promise.all(selected.map(async file => ({
+      name: file.name,
+      mediaType: file.type || '',
+      data: await base64(file),
+    })))
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, attachments }),
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || `发送失败 (${response.status})`)
     textarea.value = ''
+    selected = []
+    showSelected()
     await refresh()
   } catch (error) {
     feedback.textContent = error instanceof Error ? error.message : String(error)
   } finally {
-    send.disabled = false
+    updateSend()
     textarea.focus()
   }
 })
@@ -68,5 +141,6 @@ textarea.addEventListener('keydown', event => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) form.requestSubmit()
 })
 
+updateSend()
 refresh()
 setInterval(refresh, 2000)

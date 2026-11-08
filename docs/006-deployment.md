@@ -20,7 +20,7 @@ The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, ma
 
 ### Web conversation panel
 
-`web` defaults to `{ "enabled": true, "host": "127.0.0.1", "port": 3082 }`. The CLI prints the actual URL. Use `enabled: false` to disable the server or `port: 0` for an ephemeral port. `GET /` serves the conversation page, `GET /api/messages` returns persisted OMP messages, and `POST /api/chat` with `{ "text": "..." }` queues a durable user message. Requests are limited to loopback and same origin; there are no cookies, remote assets or CORS headers.
+`web` defaults to `{ "enabled": true, "host": "127.0.0.1", "port": 3082 }`. The CLI prints the actual URL. Use `enabled: false` to disable the server or `port: 0` for an ephemeral port. `GET /` serves the conversation page, `GET /api/messages` returns persisted OMP messages, and `POST /api/chat` with `{ "text": "...", "attachments": [{ "name": "payload.bin", "mediaType": "application/octet-stream", "data": "<base64>" }] }` queues a durable user message. Any file type is accepted, at most 3 files and 5 MiB each. Native images use `ImageContent`; UTF-8 text up to 256 KiB is inlined; other and larger files are stored under `<stateDir>/attachments/<requestId>/` and their absolute paths are passed to the Session for `read`/`bash` processing. Requests are limited to loopback and same origin; there are no cookies, remote assets or CORS headers.
 
 ### Role models
 

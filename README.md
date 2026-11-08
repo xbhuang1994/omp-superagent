@@ -59,7 +59,7 @@ Example `config.json`:
 
 Role models accept `null` or `{ "provider": "...", "model": "...", "thinkingLevel": "low" }`. Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown explicit models fail startup; no fallback model is selected silently.
 
-The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configuration. Omit `sources.github` for chat-only use. Configure it with `"web": { "enabled": true, "host": "127.0.0.1", "port": 3082 }`; set `enabled` to `false` to disable it or `port` to `0` for an ephemeral port. The CLI prints the actual URL. The server accepts loopback requests only and uses no remote assets or CORS.
+The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configuration. Omit `sources.github` for chat-only use. Configure it with `"web": { "enabled": true, "host": "127.0.0.1", "port": 3082 }`; set `enabled` to `false` to disable it or `port` to `0` for an ephemeral port. The CLI prints the actual URL. The server accepts loopback requests only and uses no remote assets or CORS. Upload any file type, up to 3 attachments per message and 5 MiB each. PNG/JPEG/WebP/GIF use native OMP image content; UTF-8 text up to 256 KiB is inlined; other and larger files are stored under `<stateDir>/attachments/<requestId>/` with their paths included in the message so OMP can inspect or transform them with `read`/`bash`.
 
 ### 3. Build and start
 

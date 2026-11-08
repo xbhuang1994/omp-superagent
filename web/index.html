@@ -19,7 +19,13 @@
     <p id="empty" class="empty">暂无消息。发送一条消息开始对话。</p>
     <form id="composer" class="composer">
       <label for="message">消息</label>
-      <textarea id="message" name="message" rows="4" maxlength="8000" required placeholder="输入要交给 orchestrator 的内容…"></textarea>
+      <textarea id="message" name="message" rows="4" maxlength="8000" placeholder="输入要交给 orchestrator 的内容…"></textarea>
+      <div class="upload-row">
+        <label class="upload-button" for="attachments">添加附件</label>
+        <input id="attachments" type="file" multiple>
+        <span class="upload-hint">任意文件，最多 3 个、每个 5 MiB</span>
+      </div>
+      <div id="attachment-list" class="attachment-list" aria-label="已选附件"></div>
       <div class="actions">
         <span id="feedback" class="feedback" role="alert"></span>
         <button id="send" type="submit">发送</button>

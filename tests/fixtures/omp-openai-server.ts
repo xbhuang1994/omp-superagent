@@ -80,6 +80,6 @@ export async function startOmpOpenAIServer(handler: (request: FixtureRequest, co
 /** Write a static fixture provider; no provider discovery request is needed. */
 export async function writeFixtureModels(agentDir: string, baseUrl: string, ids: string[] = ['fixture']): Promise<void> {
   await mkdir(agentDir, { recursive: true, mode: 0o700 })
-  const models = ids.map(id => `      - id: ${id}\n        name: ${id}\n        api: openai-completions\n        reasoning: false\n        input: [text]\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }\n        contextWindow: 32768\n        maxTokens: 4096`).join('\n')
+  const models = ids.map(id => `      - id: ${id}\n        name: ${id}\n        api: openai-completions\n        reasoning: false\n        input: [text, image]\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }\n        contextWindow: 32768\n        maxTokens: 4096`).join('\n')
   await writeFile(join(agentDir, 'models.yml'), `providers:\n  fixture:\n    baseUrl: ${baseUrl}\n    api: openai-completions\n    apiKey: fixture-key\n    models:\n${models}\n`, { mode: 0o600 })
 }

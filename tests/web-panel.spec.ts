@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -69,6 +70,62 @@ it('rejects cross-origin posts and invalid input', async () => {
     body: JSON.stringify({ text: '   ' }) })
   expect(invalid.status).toBe(400)
 })
+it('uploads image and text attachments into OMP content and persisted history', async () => {
+  const response = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'Inspect attachments', attachments: [
+      { name: 'pixel.png', mediaType: '', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
+      { name: 'notes.txt', mediaType: 'text/plain', data: Buffer.from('hello attachment').toString('base64') },
+    ] }) })
+  expect(response.status).toBe(202)
+  await vi.waitFor(async () => {
+    const result = await fetch(`${panel.url}api/messages`)
+    const { messages }: { messages: { text: string; images?: { name: string }[] }[] } = await result.json()
+    expect(messages.some(message => message.images?.some(image => image.name === 'pixel.png'))).toBe(true)
+  })
+  const { messages }: { messages: { text: string; images?: { name: string }[] }[] } = await (await fetch(`${panel.url}api/messages`)).json()
+  expect(messages.some(message => message.text.includes('hello attachment') && message.text.includes('notes.txt'))).toBe(true)
+  expect(JSON.stringify(server.requests)).toContain('"type":"image_url"')
+})
+
+it('accepts arbitrary binary files, persists bytes, and infers undeclared text', async () => {
+  const bytes = Buffer.from([0, 255, 1, 2, 3, 4])
+  const response = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'Process this file', attachments: [
+      { name: 'payload.bin', mediaType: 'application/octet-stream', data: bytes.toString('base64') },
+      { name: 'extensionless', mediaType: '', data: Buffer.from('inferred plain text').toString('base64') },
+    ] }) })
+  expect(response.status).toBe(202)
+  let path = ''
+  await vi.waitFor(async () => {
+    const { messages }: { messages: { text: string; files?: { name: string; kind: string }[] }[] } = await (await fetch(`${panel.url}api/messages`)).json()
+    const message = messages.find(message => message.files?.some(file => file.name === 'payload.bin' && file.kind === 'file'))
+    path = message?.text.match(/path="([^"]+)"/)?.[1] ?? ''
+    expect(path).not.toBe('')
+    expect(message?.text).toContain('inferred plain text')
+  })
+  expect(await readFile(path)).toEqual(bytes)
+  await vi.waitFor(() => { expect(JSON.stringify(server.requests)).toContain(path) })
+})
+
+it('accepts zero-byte files', async () => {
+  const response = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '', attachments: [{ name: 'empty.dat', mediaType: 'application/octet-stream', data: '' }] }) })
+  expect(response.status).toBe(202)
+  await vi.waitFor(async () => {
+    const { messages }: { messages: { files?: { name: string }[] }[] } = await (await fetch(`${panel.url}api/messages`)).json()
+    expect(messages.some(message => message.files?.some(file => file.name === 'empty.dat'))).toBe(true)
+  })
+})
+
+it('rejects invalid base64 and too many attachments', async () => {
+  const bad = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '', attachments: [{ name: 'bad.png', mediaType: 'image/png', data: 'not-base64' }] }) })
+  expect(bad.status).toBe(400)
+  const many = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '', attachments: Array.from({ length: 4 }, () => ({ name: 'note.txt', mediaType: 'text/plain', data: 'eA==' })) }) })
+  expect(many.status).toBe(400)
+})
+
 it('accepts same-origin browser requests on a wildcard LAN listener', async () => {
   const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions)
   await lan.start()

@@ -38,3 +38,15 @@ button:disabled { opacity: .55; cursor: wait; }
   .message { max-width: 96%; }
   .composer { padding: 12px 14px 16px; }
 }
+
+.upload-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.upload-button { display: inline-block; border: 1px solid #475569; border-radius: 8px; padding: 7px 12px; color: #93c5fd; cursor: pointer; font-size: 13px; }
+.upload-button:hover { border-color: #60a5fa; }
+#attachments { display: none; }
+.upload-hint { color: #94a3b8; font-size: 12px; }
+.attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.attachment-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; border: 1px solid #334155; border-radius: 999px; padding: 4px 8px; color: #cbd5e1; font-size: 12px; }
+.attachment-chip button { padding: 2px 6px; background: transparent; color: #93c5fd; font-size: 11px; }
+.attachment-image { margin: 12px 0 0; }
+.attachment-image img { display: block; max-width: min(100%, 480px); max-height: 360px; border-radius: 8px; object-fit: contain; }
+.attachment-image figcaption { margin-top: 5px; color: #94a3b8; font-size: 12px; overflow-wrap: anywhere; }

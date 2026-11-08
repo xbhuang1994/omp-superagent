@@ -3,9 +3,51 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 import { packagePath } from '../infra/paths.ts'
-import type { OMPSessions } from './sessions.ts'
+import type { ChatAttachment, OMPSessions } from './sessions.ts'
 
-interface PanelMessage { id: number; role: 'user' | 'assistant' | 'event'; text: string; at?: number }
+interface AttachmentInfo { name: string; mediaType: string; kind: 'image' | 'text' | 'file' }
+interface PanelMessage { id: number; role: 'user' | 'assistant' | 'event'; text: string; at?: number; images?: { name: string; mediaType: string; data: string }[]; files?: AttachmentInfo[] }
+const MAX_FILES = 3, MAX_FILE_BYTES = 5 * 1024 * 1024, MAX_BODY_BYTES = 24 * 1024 * 1024
+
+function attachmentName(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Attachment name must be a string')
+  const name = value.replace(/[\\/\x00-\x1f\x7f]/g, '_').trim().slice(0, 200)
+  return name || 'attachment'
+}
+function attachmentData(value: unknown): Buffer {
+  if (typeof value !== 'string') throw new Error('Attachment data must be base64')
+  const data = Buffer.from(value, 'base64')
+  if (data.toString('base64') !== value || data.length > MAX_FILE_BYTES) throw new Error('Attachment data is invalid or exceeds 5 MiB')
+  return data
+}
+function attachment(value: unknown): ChatAttachment {
+  if (!value || typeof value !== 'object') throw new Error('Invalid attachment')
+  const name = attachmentName('name' in value ? value.name : undefined)
+  const mediaType = 'mediaType' in value && typeof value.mediaType === 'string' ? value.mediaType.trim().toLowerCase().slice(0, 200) : ''
+  const data = attachmentData('data' in value ? value.data : undefined)
+  return { name, mediaType, data: data.toString('base64') }
+}
+function messageAttachments(message: unknown): AttachmentInfo[] {
+  if (!message || typeof message !== 'object' || !('details' in message) || !message.details || typeof message.details !== 'object'
+    || !('attachments' in message.details) || !Array.isArray(message.details.attachments)) return []
+  return message.details.attachments.flatMap(info => {
+    if (!info || typeof info !== 'object' || !('name' in info) || typeof info.name !== 'string') return []
+    const mediaType = 'mediaType' in info && typeof info.mediaType === 'string' ? info.mediaType : 'application/octet-stream'
+    const declared = 'kind' in info && typeof info.kind === 'string' ? info.kind : ''
+    const kind = declared === 'image' || declared === 'text' || declared === 'file' ? declared : mediaType.startsWith('image/') ? 'image' : 'file'
+    return [{ name: info.name, mediaType, kind }]
+  })
+}
+function messageImages(message: unknown): { name: string; mediaType: string; data: string }[] {
+  if (!message || typeof message !== 'object' || !('content' in message) || !Array.isArray(message.content)) return []
+  const metadata = messageAttachments(message).filter(info => info.kind === 'image')
+  let imageIndex = 0
+  return message.content.flatMap((block, index) => {
+    if (!block || typeof block !== 'object' || !('type' in block) || block.type !== 'image' || !('data' in block) || typeof block.data !== 'string' || !('mimeType' in block) || typeof block.mimeType !== 'string') return []
+    const name = metadata[imageIndex++]?.name ?? `image-${index + 1}`
+    return [{ name, mediaType: block.mimeType, data: block.data }]
+  })
+}
 interface WebOptions { enabled: boolean; host: string; port: number }
 
 function messageText(message: unknown): string {
@@ -63,8 +105,12 @@ export class WebPanel {
           return this.json(response, 400, { error: 'Expected { text: string }' })
         }
         const text = parsed.text.trim()
-        if (!text || text.length > 8000) return this.json(response, 400, { error: 'Message must contain 1–8000 characters' })
-        const requestId = await this.sessions.chat(this.masterId, text)
+        const attachments = 'attachments' in parsed && parsed.attachments !== undefined
+          ? (Array.isArray(parsed.attachments) ? parsed.attachments : []).slice(0, MAX_FILES + 1).map(attachment)
+          : []
+        if (attachments.length > MAX_FILES) return this.json(response, 400, { error: `At most ${MAX_FILES} attachments` })
+        if ((!text && attachments.length === 0) || text.length > 8000) return this.json(response, 400, { error: 'Message or attachment required; text limit 8000 characters' })
+        const requestId = await this.sessions.chat(this.masterId, text, attachments)
         return this.json(response, 202, { requestId })
       }
       if (request.method === 'GET' && (path === '/' || path === '/app.js' || path === '/style.css')) {
@@ -89,7 +135,9 @@ export class WebPanel {
       const source = message.role === 'custom' && message.details && typeof message.details === 'object' && 'source' in message.details ? message.details.source : undefined
       const role = message.role === 'assistant' ? 'assistant' : message.role === 'custom' && source !== 'web-panel' ? 'event' : 'user'
       const at = 'timestamp' in message && typeof message.timestamp === 'number' ? message.timestamp : undefined
-      return [{ id: index, role, text, ...at === undefined ? {} : { at } }]
+      const images = messageImages(message)
+      const files = messageAttachments(message).filter(attachment => attachment.kind !== 'image')
+      return [{ id: index, role, text, ...at === undefined ? {} : { at }, ...images.length ? { images } : {}, ...files.length ? { files } : {} }]
     })
   }
 
@@ -97,7 +145,7 @@ export class WebPanel {
     let body = ''
     for await (const chunk of request) {
       body += chunk
-      if (body.length > 16_384) throw new Error('Request body too large')
+      if (body.length > MAX_BODY_BYTES) throw new Error('Request body too large')
     }
     return body
   }

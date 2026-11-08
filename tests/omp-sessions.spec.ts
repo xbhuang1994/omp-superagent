@@ -70,7 +70,7 @@ it('runs a JSON Schema custom tool in restricted orchestrator and worker allowli
   await f.sessions.prompt('worker-ticket-1', 'worker-1', 'probe', 'queue')
   await workerEnd.promise
   expect(f.probe).toHaveBeenCalledTimes(2)
-  expect(f.server.requests[0]?.tools?.map(tool => tool.function?.name)).toEqual(['fixture_probe'])
+  expect(f.server.requests[0]?.tools?.map(tool => tool.function?.name)?.sort()).toEqual(['bash', 'fixture_probe', 'read'])
   expect(f.server.requests[2]?.tools?.map(tool => tool.function?.name)?.sort()).toEqual(['bash', 'edit', 'fixture_probe', 'read', 'write'])
 })
 
