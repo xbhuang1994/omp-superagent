@@ -12,7 +12,7 @@ describe('startup JSON', () => {
   it('requires absolute stateDir and resolves the default agentDir and limits', () => {
     const config = Config.parse(minimal())
     expect(machineOf(config)).toEqual({ stateDir: join(dir, 'state'), agentDir: join(dir, 'state', 'omp'), promptMaxChars: 100000,
-      admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000 })
+      admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000, web: { enabled: true, host: '127.0.0.1', port: 3082 } })
     expect(() => Config.parse({})).toThrow('stateDir')
     expect(() => Config.parse({ stateDir: 'relative' })).toThrow()
     expect(() => Config.parse(minimal({ extra: true }))).toThrow()

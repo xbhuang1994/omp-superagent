@@ -39,7 +39,7 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 | Files | Area |
 | --- | --- |
 | `src/cli.ts`, `src/index.ts`, `src/deployment.ts`, `src/setup.ts`, `src/policy.ts`, `src/limits.ts`, `src/admission.ts`, `src/kv.ts` | Entry/configuration |
-| `src/app/runtime.ts`, `src/app/sessions.ts`, `src/app/delivery.ts`, `src/app/effects.ts`, `src/app/passes.ts` | Runtime/Sessions |
+| `src/app/runtime.ts`, `src/app/sessions.ts`, `src/app/delivery.ts`, `src/app/effects.ts`, `src/app/passes.ts`, `src/app/web.ts`, `web/index.html`, `web/app.js`, `web/style.css` | Runtime/Sessions/Web panel |
 | `src/executor/omp.ts`, `src/app/execution-environment.ts`, `src/app/outbox.ts`, `src/app/notices.ts` | Domain execution |
 | `src/app/assessment.ts`, `src/app/resources.ts`, `src/app/cards.ts`, `src/app/context.ts`, `src/app/links.ts` | Assessment/resources |
 | `src/app/prompts.ts`, `src/app/skill-files.ts`, `src/app/cache.ts`, `src/app/versions.ts`, `src/app/store.ts`, `src/app/store-read.ts`, `src/app/source-context.ts` | Prompt/state helpers |
@@ -56,8 +56,8 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 
 | Files | Coverage |
 | --- | --- |
-| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts` | Real OMP Sessions/delivery and executor slots |
-| `tests/fixtures/omp-openai-server.ts`, `tests/fixtures/deployment.ts`, `tests/fixtures/git.ts`, `tests/fixtures/async.ts` | CLI/provider fixtures |
+| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts` | Real OMP Sessions/delivery, executor slots and Web API |
+| `tests/fixtures/omp-openai-server.ts`, `tests/fixtures/deployment.ts`, `tests/fixtures/git.ts`, `tests/fixtures/async.ts`, `tests/fixtures/web-panel-fixture.ts` | CLI/provider/browser fixtures |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/commands.spec.ts` | Deployment/environment/commands |
 | `tests/policy.spec.ts`, `tests/core-engine.spec.ts`, `tests/assessment.spec.ts` | Policy/engine/assessment |
 | `tests/store.spec.ts`, `tests/effects.spec.ts`, `tests/timeline.spec.ts` | Store/effects/timeline |

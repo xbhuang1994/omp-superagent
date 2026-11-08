@@ -63,7 +63,8 @@ export class AgentDelivery {
   }
 
   async send(session: AgentSession, requestId: string, text: string, mode: 'queue' | 'steer' | { inject: string }, signal: AbortSignal,
-    inputIds: string[] | undefined, authorize?: () => void, accepted?: () => void): Promise<void> {
+    inputIds: string[] | undefined, authorize?: () => void, accepted?: () => void,
+    presentation: { display: boolean; attribution: 'agent' | 'user'; source?: string } = { display: false, attribution: 'agent' }): Promise<void> {
     signal.throwIfAborted()
     if (session.isDisposed) throw new Error('Delivery target was disposed')
     const state = this.states.get(session)
@@ -97,8 +98,8 @@ export class AgentDelivery {
       ? { triggerTurn: true, deliverAs: 'steer' as const } : { triggerTurn: true, deliverAs: 'followUp' as const }
     let running: Promise<boolean>
     try {
-      running = session.sendCustomMessage({ customType: 'omp-superagent', content: text, display: false, attribution: 'agent',
-        details: { requestId, ...(inputIds?.length ? { inputIds } : {}) } }, options)
+      running = session.sendCustomMessage({ customType: 'omp-superagent', content: text, display: presentation.display, attribution: presentation.attribution,
+        details: { requestId, ...(inputIds?.length ? { inputIds } : {}), ...(presentation.source ? { source: presentation.source } : {}) } }, options)
     } catch (error) {
       fail(error instanceof Error ? error : new Error(String(error)))
       await done

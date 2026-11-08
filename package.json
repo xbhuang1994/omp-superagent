@@ -22,7 +22,8 @@
     "lib",
     "README.md",
     "prompts",
-    "skills"
+    "skills",
+    "web"
   ],
   "scripts": {
     "start": "bun lib/cli.js",
@@ -41,6 +42,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@types/node": "22.20.0",
     "@types/proper-lockfile": "4.1.4",
     "tsdown": "0.22.14",

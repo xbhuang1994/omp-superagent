@@ -10,13 +10,17 @@ bun run build
 ./lib/cli.js --config /absolute/path/config.json
 ```
 
-`omp-superagent` owns one state-directory lock. A second process on the same directory fails before opening SQLite. Startup validates the GitHub account and push access before Sessions begin. `SIGINT`/`SIGTERM` performs ordered cleanup and exits zero on success.
+`omp-superagent` owns one state-directory lock. A second process on the same directory fails before opening SQLite. GitHub identity and push access are validated only when `sources.github.enabled` is true; omit that source for Web-only chat. `SIGINT`/`SIGTERM` performs ordered cleanup and exits zero on success.
 
 ## Startup JSON
 
 `stateDir` is required and absolute. `agentDir` is optional and defaults to `<stateDir>/omp`. Optional machine limits are `promptMaxChars` (default 100000), `admissionContextMaxPages` (10), and `admissionContextTimeoutMs` (15000). Unknown keys fail.
 
 The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, matching `SettingsSchema`. Startup JSON is their only source: there is no settings API or online editor. Changed values are saved on startup; policy changes create Inputs on open Tickets.
+
+### Web conversation panel
+
+`web` defaults to `{ "enabled": true, "host": "127.0.0.1", "port": 3082 }`. The CLI prints the actual URL. Use `enabled: false` to disable the server or `port: 0` for an ephemeral port. `GET /` serves the conversation page, `GET /api/messages` returns persisted OMP messages, and `POST /api/chat` with `{ "text": "..." }` queues a durable user message. Requests are limited to loopback and same origin; there are no cookies, remote assets or CORS headers.
 
 ### Role models
 
@@ -26,7 +30,7 @@ The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, ma
 { "provider": "provider-id", "model": "model-id", "thinkingLevel": "low" }
 ```
 
-Levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Explicit models must resolve through shared `ModelRegistry.find`; startup never substitutes another model. `null` uses OMP defaults only for a new Session and preserves the persisted selection after reopen. A changed non-null model overrides the transcript selection without persisting that override back into it.
+Levels are `auto`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` lets OMP choose reasoning effort per request. Explicit models must resolve through shared `ModelRegistry.find`; startup never substitutes another model. `null` uses OMP defaults only for a new Session and preserves the persisted selection after reopen. A changed non-null model overrides the transcript selection without persisting that override back into it.
 
 ## State layout
 

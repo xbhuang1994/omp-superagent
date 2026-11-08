@@ -68,7 +68,7 @@ export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().m
   instruction: z.string().trim().min(1).max(LIMITS.ruleInstruction) }).strict()
 export type Rule = z.infer<typeof RuleSchema>
 export const RoleModelSchema = z.object({ provider: z.string().trim().min(1), model: z.string().trim().min(1),
-  thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional() }).strict()
+  thinkingLevel: z.enum(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional() }).strict()
 export type RoleModel = z.infer<typeof RoleModelSchema>
 
 export const AllowedSchema = z.object({ id: z.string().trim().min(1).max(200), name: z.string().trim().max(100).optional() }).strict()

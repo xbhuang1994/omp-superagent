@@ -15,6 +15,7 @@ async function main(): Promise<void> {
   const runtime = new Runtime(machineOf(config), config)
   await runtime.ready
   console.error('omp-superagent ready')
+  if (config.web.enabled) console.error(`Web panel: ${runtime.web.url}`)
   let stopping: Promise<void> | undefined
   const stop = (): Promise<void> => stopping ??= runtime.stop().then(() => { process.exitCode = 0 }, error => {
     console.error(error)

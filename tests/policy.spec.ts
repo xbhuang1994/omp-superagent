@@ -46,8 +46,8 @@ describe('assessment outcomes and models', () => {
     expect(assessmentOutcome(value(true), settings, 'explicit')).toMatchObject({ kind: 'accept' })
   })
   it('validates exact OMP role model selectors', () => {
-    expect(RoleModelSchema.parse({ provider: 'fixture', model: 'test', thinkingLevel: 'max' })).toMatchObject({ thinkingLevel: 'max' })
+    expect(RoleModelSchema.parse({ provider: 'fixture', model: 'test', thinkingLevel: 'auto' })).toMatchObject({ thinkingLevel: 'auto' })
     expect(() => RoleModelSchema.parse({ provider: 'fixture', model: 'test', reasoningEffort: 'high' })).toThrow()
-    expect(() => RoleModelSchema.parse({ provider: 'fixture', model: 'test', thinkingLevel: 'auto' })).toThrow()
+    expect(() => RoleModelSchema.parse({ provider: 'fixture', model: 'test', thinkingLevel: 'unknown' })).toThrow()
   })
 })

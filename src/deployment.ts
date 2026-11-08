@@ -16,6 +16,7 @@ export const Config = z.object({
   promptMaxChars: z.number().int().min(LIMITS.promptMaxChars.min).max(LIMITS.promptMaxChars.max).default(100000),
   admissionContextMaxPages: z.number().int().min(LIMITS.admissionContextMaxPages.min).max(LIMITS.admissionContextMaxPages.max).default(10),
   admissionContextTimeoutMs: z.number().int().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).default(15000),
+  web: z.object({ enabled: z.boolean().default(true), host: z.string().default('127.0.0.1'), port: z.number().int().min(0).max(65535).default(3082) }).default({ enabled: true, host: '127.0.0.1', port: 3082 }),
   ...SettingsSchema.shape,
 }).strict()
 export type DeploymentConfig = z.infer<typeof Config>
@@ -25,12 +26,13 @@ export interface Machine {
   promptMaxChars: number
   admissionContextMaxPages: number
   admissionContextTimeoutMs: number
+  web: { enabled: boolean; host: string; port: number }
 }
 
 export function machineOf(config: DeploymentConfig): Machine {
   const parsed = Config.parse(config)
   return { stateDir: parsed.stateDir, agentDir: parsed.agentDir ?? join(parsed.stateDir, 'omp'), promptMaxChars: parsed.promptMaxChars,
-    admissionContextMaxPages: parsed.admissionContextMaxPages, admissionContextTimeoutMs: parsed.admissionContextTimeoutMs }
+    admissionContextMaxPages: parsed.admissionContextMaxPages, admissionContextTimeoutMs: parsed.admissionContextTimeoutMs, web: parsed.web }
 }
 
 export const GithubAccountsSchema = z.object({

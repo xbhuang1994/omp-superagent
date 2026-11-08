@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OMP 对话面板</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>OMP 对话面板</h1>
+        <p>与持久 orchestrator Session 对话，仅监听本机。</p>
+      </div>
+      <span id="status" class="status" role="status">连接中…</span>
+    </header>
+    <section id="transcript" class="transcript" aria-label="对话记录" aria-live="polite"></section>
+    <p id="empty" class="empty">暂无消息。发送一条消息开始对话。</p>
+    <form id="composer" class="composer">
+      <label for="message">消息</label>
+      <textarea id="message" name="message" rows="4" maxlength="8000" required placeholder="输入要交给 orchestrator 的内容…"></textarea>
+      <div class="actions">
+        <span id="feedback" class="feedback" role="alert"></span>
+        <button id="send" type="submit">发送</button>
+      </div>
+    </form>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

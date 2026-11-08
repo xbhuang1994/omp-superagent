@@ -7,7 +7,7 @@
 - One persistent OMP orchestrator Session routes and evaluates.
 - One persistent OMP worker Session per Ticket executes and reports.
 - SQLite stores domain state, durable effects and outbox order. OMP JSONL stores transcripts and idempotent message IDs.
-- GitHub is the only Source. Feishu, a web panel, DSH hosting, online settings/Prompt editing, worker subagents and async background jobs are not included.
+- GitHub is optional; a loopback Web conversation panel is included. Feishu, DSH hosting, online settings/Prompt editing, worker subagents and async background jobs are not included.
 
 ## Usage
 
@@ -58,6 +58,8 @@ Example `config.json`:
 `agentDir` defaults to `<stateDir>/omp`. Startup JSON is the only runtime settings source; edit it and restart to apply changes. `eval.mode` is `off`, `observe`, or `auto`: `observe` evaluates proactive candidates without accepting them, while `auto` accepts bounded matches. Explicit requests always require a whitelisted sender.
 
 Role models accept `null` or `{ "provider": "...", "model": "...", "thinkingLevel": "low" }`. Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown explicit models fail startup; no fallback model is selected silently.
+
+The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configuration. Omit `sources.github` for chat-only use. Configure it with `"web": { "enabled": true, "host": "127.0.0.1", "port": 3082 }`; set `enabled` to `false` to disable it or `port` to `0` for an ephemeral port. The CLI prints the actual URL. The server accepts loopback requests only and uses no remote assets or CORS.
 
 ### 3. Build and start
 

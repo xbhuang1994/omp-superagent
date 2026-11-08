@@ -1,6 +1,7 @@
 /** Persistent OMP orchestrator and worker Sessions, with isolated tools and durable delivery. */
 import { AgentRegistry, ModelRegistry, SessionManager, Settings, createAgentSession, discoverAuthStorage, loadSkillsFromDir,
   type AgentSession, type AuthStorage, type CreateAgentSessionOptions, type CustomTool, type Skill } from '@oh-my-pi/pi-coding-agent'
+import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import z from 'zod'
@@ -167,7 +168,7 @@ export class OMPSessions {
     }
     await session.setSessionName(title, 'user')
     if (file && configured && model) {
-      await session.setModel(model, 'default', { thinkingLevel, persist: false })
+      await session.setModel(model, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
       session.setThinkingLevel(thinkingLevel, false)
     }
     this.loaded.set(sessionId, session)
@@ -194,6 +195,17 @@ export class OMPSessions {
     this.bind(session, ticketId)
     await this.delivery.send(session, requestId, text, mode, this.host.lifetime, inputIds, authorize, accepted)
   }
+  /** Queue one local operator message with a durable request ID. */
+  async chat(sessionId: string, text: string): Promise<string> {
+    const session = this.loaded.get(sessionId)
+    if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
+    const requestId = `web:${randomUUID()}`
+    this.bind(session)
+    await this.delivery.send(session, requestId, text, 'queue', this.host.lifetime, undefined, undefined, undefined,
+      { display: true, attribution: 'user', source: 'web-panel' })
+    return requestId
+  }
+
 
   async holds(sessionId: string, requestId: string): Promise<boolean> {
     const session = this.loaded.get(sessionId)

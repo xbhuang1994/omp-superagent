@@ -30,6 +30,7 @@ import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
+import { WebPanel } from './web.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -47,6 +48,7 @@ export class Runtime implements SourceHost {
   readonly engine: Engine
   readonly passes: Passes
   readonly ready: Promise<void>
+  readonly web: WebPanel
   readonly masterId: string
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
@@ -95,6 +97,7 @@ export class Runtime implements SourceHost {
           inputsRead: (ticketId, inputIds) => this.engine.inputsRead(ticketId, inputIds),
         },
         tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, sessionId) })
+      this.web = new WebPanel(machine.web, masterId, sessions)
       this.executor = new OMPExecutor({ get engine() { return runtime.engine }, store, effects, health: this.board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
@@ -155,16 +158,18 @@ export class Runtime implements SourceHost {
   private paused(): boolean { return !this.configured() || this.store.settings().paused }
 
   private async initialize(): Promise<void> {
-    this.resolved = await resolveDeployment(this.machine, this.startup.sources.github?.config,
-      workerProbe(this.machine.stateDir, this.machine.stateDir, this.lifetime))
-    try {
-      await writeEnvironment(this.resolved, this.startup.executor.blockedCommands)
-      this.restoreEnvironment = applyEnvironment(agentVariables(this.machine.stateDir), this.machine.stateDir, this.commandEnvironment.PATH ?? '')
-      await verifyEnvironment(this.resolved, this.lifetime)
-    } catch (error) {
-      this.restoreEnvironment?.()
-      this.restoreEnvironment = undefined
-      throw error
+    if (this.startup.sources.github?.enabled) {
+      this.resolved = await resolveDeployment(this.machine, this.startup.sources.github.config,
+        workerProbe(this.machine.stateDir, this.machine.stateDir, this.lifetime))
+      try {
+        await writeEnvironment(this.resolved, this.startup.executor.blockedCommands)
+        this.restoreEnvironment = applyEnvironment(agentVariables(this.machine.stateDir), this.machine.stateDir, this.commandEnvironment.PATH ?? '')
+        await verifyEnvironment(this.resolved, this.lifetime)
+      } catch (error) {
+        this.restoreEnvironment?.()
+        this.restoreEnvironment = undefined
+        throw error
+      }
     }
     const previous = this.store.settings()
     if (JSON.stringify(previous) !== JSON.stringify(this.startup)) {
@@ -182,9 +187,12 @@ export class Runtime implements SourceHost {
     this.executor.resume()
     this.passes.start()
     this.effects.start()
-    const source = this.context(githubKind)
-    this.watcher = watch(source, this.watcherController.signal)
-      .catch((error: unknown) => { source.report('github', { state: 'error', detail: String(error) }) })
+    if (this.resolved) {
+      const source = this.context(githubKind)
+      this.watcher = watch(source, this.watcherController.signal)
+        .catch((error: unknown) => { source.report('github', { state: 'error', detail: String(error) }) })
+    }
+    await this.web.start()
     this.runtimeHealth.set({ state: 'ready', detail: 'Orchestrator is ready', at: now() })
   }
 
@@ -196,6 +204,7 @@ export class Runtime implements SourceHost {
     try {
       this.assessor.stop()
       await Promise.allSettled([...(this.watcher ? [this.watcher] : []), passes])
+      await this.web.stop()
       await this.sessions.stopAll()
       this.executor.dispose()
       await this.effects.drain()
