@@ -28,11 +28,20 @@ function render(messages) {
     rendered.add(message.id)
     const article = document.createElement('article')
     article.className = `message ${message.role}`
+    const meta = document.createElement('div')
+    meta.className = 'message-meta'
     const role = document.createElement('strong')
     role.textContent = message.role === 'assistant' ? 'OMP' : message.role === 'user' ? '用户' : '事件'
+    meta.append(role)
+    if (message.at) {
+      const time = document.createElement('time')
+      time.dateTime = new Date(message.at).toISOString()
+      time.textContent = new Date(message.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      meta.append(time)
+    }
     const text = document.createElement('pre')
     text.textContent = message.text
-    article.append(role, text)
+    article.append(meta, text)
     for (const image of message.images ?? []) {
       const figure = document.createElement('figure')
       figure.className = 'attachment-image'
