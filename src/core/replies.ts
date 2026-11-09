@@ -64,8 +64,10 @@ export class Replies extends EnginePart {
   private answer(request: Exclude<ReplyRequest, { purpose: 'acknowledgement' }>): Reply {
     const trigger = request.triggerId ? this.repo.triggers.get(request.triggerId) : undefined
     if (request.triggerId && !trigger) throw new UserError('unknownTrigger')
+    // A hand-back returns the message to the orchestrator; it no longer waits for that ticket's worker to answer it.
+    const returned = new Set(trigger ? this.repo.triggers.disposition(trigger.id)?.handbacks?.map(item => item.ticketId) : undefined)
     const ticket = request.ticketId ? this.require(request.ticketId)
-      : trigger ? this.repo.tickets.list().find(item => this.reaches(item, trigger)) : undefined
+      : trigger ? this.repo.tickets.list().find(item => this.reaches(item, trigger) && !returned.has(item.id)) : undefined
     if (request.purpose === 'result') {
       const outcome = ticket && ticketOutcome(ticket)
       const reported = !!ticket && liveTicket(ticket) && latestAssignment(ticket)?.report?.state === 'ready'

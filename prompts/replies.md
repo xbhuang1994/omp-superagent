@@ -2,7 +2,7 @@ The reply tool enforces a purpose: result requires ticket readiness; attention r
 For a structured request, pass ticket_id and copy the current ticket.attention.question into human_action.
 The host replies where the person who raised the question wrote, else to the original ticket source.
 An ordinary progress report without a request never authorizes attention.
-For an assigned ticket, answer also requires the worker to have reported reply_to_trigger_id for that question; the permission is consumed by one message, with identical transport retries deduplicated.
+For an assigned ticket, answer also requires the worker to have reported reply_to_trigger_id for that human message; the permission is consumed by one message, with identical transport retries deduplicated. A no-work acknowledgement may use this path without manufacturing a result.
 Ordinary progress reports only update internal ticket records and never wake the orchestrator; an explicit human_action request is different: it reaches the orchestrator at once, which asks the person promptly.
 Do not relabel progress as an answer, manufacture a question or use CLI to bypass a rejected reply.
 Internal PR-binding progress reports must not trigger IM.

@@ -77,8 +77,9 @@ export const batchOf = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket
   .filter(id => id !== ticket.origin.triggerId).flatMap(id => host.store.triggers.get(id) ?? [])
 const RESUMED = 'This ticket ended earlier and the message that follows, on its thread, resumed it under the same mandate. If it asks for '
   + 'more within the original scope, inspect the worktree, git history and PR state and continue; if it asks for work beyond that scope or '
-  + 'for another ticket, hand it back with orchestrator_trigger_handback and report dropped; if it needs nothing, such as thanks, '
-  + 'report dropped without a message. Report ready when the follow-up is done. Do not repeat completed work.'
+  + 'for another ticket, hand it back with orchestrator_trigger_handback and report dropped. No new work does not mean no reply: '
+  + 'for thanks, acknowledgements, or other human follow-ups needing no work, report dropped with reply_to_trigger_id set to that message '
+  + 'and a short natural response in summary, so the orchestrator can answer. Report ready when follow-up work is done. Do not repeat completed work.'
 const RETRIED = 'A person retried this ticket. Continue the assignment from the current worktree, git history and PR state.'
 function policyMessage(effect?: PolicyEffect): string {
   if (!effect) return 'Policy change: the access or admission rules changed. Check that the remaining work stays within the assignment.'

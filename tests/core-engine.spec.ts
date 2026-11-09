@@ -1048,6 +1048,17 @@ describe('replies', () => {
     expect(h.engine.reply({ purpose: 'result', ticketId, text: 'Done' })).toMatchObject({ status: 'pending' })
     expect(h.outbox.at(-1)!.channel).toEqual(trigger('1').channel)
   })
+  it('answers a human trigger after its ticket worker handed it back', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const asked = trigger('2', { actor: guest, channel: { source: 'chat', thread: 't1', address: { message: '2' } } })
+    h.engine.receive(asked)
+    expect(() => h.engine.reply({ purpose: 'answer', triggerId: '2', text: '成都现在 16℃。' })).toThrow(new UserError('noAnswer'))
+    h.engine.handback(ticketId, '2', 'Weather is outside this ticket')
+    expect(h.engine.reply({ purpose: 'answer', triggerId: '2', text: '成都现在 16℃。' })).toMatchObject({ status: 'pending', reused: false })
+    expect(h.outbox.at(-1)).toMatchObject({ channel: asked.channel, text: '成都现在 16℃。', kind: 'reply' })
+    expect(h.outbox.at(-1)).not.toHaveProperty('ticketId')
+  })
 })
 describe('ticket commands', () => {
   it('ends a ticket by the same rule on a close and on a ready report: once no PR it opened is open, as the latest of them ended', () => {

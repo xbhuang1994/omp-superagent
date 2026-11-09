@@ -110,16 +110,10 @@ it('keeps unlisted chat senders out of candidates and ticket creation', async ()
 it('answers chatter naturally without creating a ticket', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'omp-chat-chatter-'))
   let triggerId = ''
-  let answered = false
   const provider = await startOmpOpenAIServer(request => {
     if (!request.messages.some(message => message.role === 'tool')) return { toolCalls: [{ name: 'orchestrator_route', arguments: {
-      decisions: [{ kind: 'ignore', trigger_id: triggerId, reason: 'ordinary chatter' }],
+      decisions: [{ kind: 'ignore', trigger_id: triggerId, reason: 'ordinary chatter', answer: '哈哈，收到，我放松点，不整官方腔了。你想聊啥？' }],
     } }] }
-    if (!answered) {
-      answered = true
-      return { toolCalls: [{ name: 'orchestrator_reply', arguments: { trigger_id: triggerId, purpose: 'answer',
-        text: '哈哈，收到，我放松点，不整官方腔了。你想聊啥？' } }] }
-    }
     return { content: 'Done' }
   })
   await writeFixtureModels(join(dir, 'omp'), provider.baseUrl)
@@ -137,6 +131,59 @@ it('answers chatter naturally without creating a ticket', async () => {
       const view = await (await fetch(`${runtime.web.url}api/messages`)).json() as { messages: { text: string }[] }
       expect(view.messages.some(message => message.text === '哈哈，收到，我放松点，不整官方腔了。你想聊啥？')).toBe(true)
     })
+  } finally {
+    await runtime.stop()
+    await provider.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('answers a no-work voice follow-up through the existing answer pipeline', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omp-voice-followup-'))
+  let triggerId = '', followupId = '', ticketId = ''
+  const provider = await startOmpOpenAIServer(request => {
+    const latest = JSON.stringify(request.messages.at(-1)?.content ?? '')
+    const worker = request.tools?.some(tool => tool.function?.name === 'orchestrator_report')
+    if (worker) {
+      if (followupId && latest.includes(followupId)) return { toolCalls: [{ name: 'orchestrator_report', arguments: {
+        state: 'dropped', summary: '好的，知道了。', reply_to_trigger_id: followupId,
+      } }] }
+      if (request.messages.at(-1)?.role === 'tool') {
+        if (latest.includes('worker-result.txt')) return { toolCalls: [{ name: 'orchestrator_report', arguments: { state: 'ready', summary: 'Initial work ready.' } }] }
+        return { content: 'Worker ready.' }
+      }
+      return { toolCalls: [{ name: 'write', arguments: { path: 'worker-result.txt', content: 'done\n' } }] }
+    }
+    if (request.messages.at(-1)?.role === 'tool') return { content: 'Done' }
+    const batch = JSON.stringify(request.messages.slice(request.messages.findLastIndex(message => message.role === 'tool') + 1).map(message => message.content))
+    if (batch.includes('worker_report')) {
+      if (followupId && batch.includes(followupId)) return { toolCalls: [{ name: 'orchestrator_reply', arguments: {
+        trigger_id: followupId, purpose: 'answer', text: '好的，知道了。',
+      } }] }
+      return { toolCalls: [{ name: 'orchestrator_reply', arguments: { ticket_id: ticketId, purpose: 'result', text: 'Initial work completed.' } }] }
+    }
+    return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'accept', trigger_id: triggerId,
+      title: 'Voice follow-up fixture', worktree_name: 'voice-followup-fixture', acknowledgement: 'Starting fixture.' }] } }] }
+  })
+  await writeFixtureModels(join(dir, 'omp'), provider.baseUrl)
+  const settings = config(dir)
+  const runtime = new Runtime(machineOf(settings), settings)
+  try {
+    await runtime.ready
+    triggerId = (await post(runtime, '完成初始工单', 'web:voice-origin')).triggerId
+    await vi.waitFor(() => { expect(runtime.store.tickets.list()).toHaveLength(1) })
+    ticketId = runtime.store.tickets.list()[0]!.id
+    await vi.waitFor(async () => {
+      const view = await (await fetch(`${runtime.web.url}api/messages`)).json() as { messages: { text: string }[] }
+      expect(view.messages.some(message => message.text === 'Initial work completed.')).toBe(true)
+    })
+    followupId = (await post(runtime, '[语音转写] 好的，知道了', 'web:voice-ack')).triggerId
+    await vi.waitFor(async () => {
+      const view = await (await fetch(`${runtime.web.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
+      expect(view.messages.some(message => message.role === 'assistant' && message.text === '好的，知道了。')).toBe(true)
+      expect(runtime.store.receipts.get(key('reply', followupId, '好的，知道了。'))?.status).toBe('sent')
+    })
+    expect(runtime.store.tickets.list()).toHaveLength(1)
   } finally {
     await runtime.stop()
     await provider.close()
