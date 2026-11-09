@@ -16,7 +16,7 @@ Non-null role models resolve through the shared registry and override restored t
 
 Application messages use hidden custom messages, never host inbox objects. Each carries `requestId` and optional Input IDs. The delivery layer scans full SessionManager branches, not only active model messages. Entry visibility plus `flushToDisk()` is the commit barrier; Effects never wait for the whole model turn.
 
-`transcript(ticketId)` returns OMP `AgentMessage[]`, supporting resource pagination/previews. `stopAll()` begins disposal on all loaded Sessions before awaiting any cleanup, preventing queued work from starting another turn.
+`transcript(ticketId)` returns loaded OMP messages or reads the worker's persisted branch directly with `SessionManager.open(..., { throwIfMissing: true })`. Historical reads do not create an AgentSession and do not require a live Ticket. `stopAll()` begins disposal on all loaded Sessions before awaiting any cleanup, preventing queued work from starting another turn.
 
 The Web panel's reset action disposes the current orchestrator, removes only its alias-to-JSONL mapping, and creates an empty Session under the same durable alias. Domain state, worker Sessions, attachments, Source Triggers, and WeChat credentials/cursor survive. Outbox delivery needs no Session event subscription and continues into the replacement transcript.
 

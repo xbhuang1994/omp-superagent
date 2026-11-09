@@ -11,6 +11,7 @@ import { SettingsSchema } from '../../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels } from './omp-openai-server.ts'
 import { WeChatBridge } from '../../src/app/wechat.ts'
 import { ChatSource } from '../../src/sources/chat.ts'
+import { WorkerView } from '../../src/app/workers.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'omp-web-browser-'))
 const provider = await startOmpOpenAIServer(() => ({ content: '浏览器回复：你好，OMP 已收到。' }))
@@ -29,7 +30,7 @@ const chat: ChatSource = new ChatSource({ sessions, masterId: 'main', receive: a
 }, deliverWeChat: (id, text, userId) => wechat.deliver(id, text, userId) })
 const wechat: WeChatBridge = new WeChatBridge({ store, chat })
 await wechat.start()
-const panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 3082 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat)
+const panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 3082 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat, new WorkerView(store, sessions))
 await panel.start()
 console.log(panel.url)
 process.once('SIGINT', async () => {

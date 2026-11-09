@@ -32,6 +32,7 @@ import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { WebPanel } from './web.ts'
 import { WeChatBridge } from './wechat.ts'
+import { WorkerView } from './workers.ts'
 import { ChatSource } from '../sources/chat.ts'
 
 const now = (): string => new Date().toISOString()
@@ -101,11 +102,12 @@ export class Runtime implements SourceHost {
           inputsRead: (ticketId, inputIds) => this.engine.inputsRead(ticketId, inputIds),
         },
         tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, sessionId) })
+      const workers = new WorkerView(store, sessions)
       const chat = this.chat = new ChatSource({ sessions, masterId, receive: trigger => this.receive(trigger),
         deliverWeChat: (id, text, userId) => this.wechat.deliver(id, text, userId) })
       sources.register(chat.kind())
       this.wechat = new WeChatBridge({ store, chat })
-      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator(), chat)
+      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator(), chat, workers)
       this.executor = new OMPExecutor({ get engine() { return runtime.engine }, store, effects, health: this.board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })

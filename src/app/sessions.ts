@@ -281,12 +281,15 @@ export class OMPSessions {
   }
 
   async transcript(ticketId: string): Promise<unknown[]> {
-    const loaded = this.loaded.get(workerSessionId(ticketId))
+    const alias = workerSessionId(ticketId)
+    const loaded = this.loaded.get(alias)
     if (loaded) return loaded.messages
-    const ticket = this.host.store.tickets.get(ticketId)
-    if (!ticket || !this.host.store.get(KV.sessions.files(workerSessionId(ticketId)))) return []
-    const session = await this.ensure(workerSessionId(ticketId), ticket.execution?.directory ?? '', ticket.title, 'worker', ticket)
-    return session.messages
+    const file = this.host.store.get(KV.sessions.files(alias))
+    if (!file) return []
+    const manager = await SessionManager.open(file, join(this.host.machine.stateDir, 'sessions'), undefined,
+      { initialCwd: this.host.machine.stateDir, throwIfMissing: true })
+    return manager.getBranch().flatMap<unknown>(entry => entry.type === 'message' ? [entry.message]
+      : entry.type === 'custom_message' ? [{ ...entry, timestamp: Date.parse(entry.timestamp), role: 'custom' }] : [])
   }
 
   /** Replace only the main Session with an empty persistent transcript; channel bindings and domain state survive. */

@@ -18,6 +18,16 @@ const wechatVerify = document.querySelector('#wechat-verify')
 const wechatCode = document.querySelector('#wechat-code')
 const wechatDisconnect = document.querySelector('#wechat-disconnect')
 const wechatRefresh = document.querySelector('#wechat-refresh')
+const workerButton = document.querySelector('#worker-button')
+const workerModal = document.querySelector('#worker-modal')
+const workerCount = document.querySelector('#worker-count')
+const workerSummary = document.querySelector('#worker-summary')
+const workerList = document.querySelector('#worker-list')
+const workerDetail = document.querySelector('#worker-detail')
+let selectedWorker
+let workerDetailVersion = 0
+let workerDetailSnapshot = ''
+let refreshingWorkers = false
 let wechatState
 const rendered = new Set()
 let selected = []
@@ -158,6 +168,150 @@ async function refresh() {
     status.className = 'status offline'
   }
 }
+function workerStatus(worker) {
+  if (worker.session.streaming) return { text: '正在执行', kind: 'working' }
+  if (worker.stage.stage === 'ended') return { text: worker.outcome === 'completed' ? '已完成' : '已结束', kind: 'ended' }
+  if (worker.stage.stage === 'person') {
+    const labels = { delivery: '投递失败', answer: '等待回复', review: '待确认结果', blocked: '已阻塞', failed: '执行失败' }
+    return { text: labels[worker.stage.action], kind: 'person' }
+  }
+  if (worker.stage.stage === 'idle') return { text: '空闲', kind: 'idle' }
+  return { text: worker.stage.action === 'queued' ? '排队等待' : '工作中', kind: 'working' }
+}
+function renderWorkers(workers) {
+  const active = workers.filter(worker => worker.stage.stage !== 'ended').length
+  workerCount.textContent = String(active)
+  workerSummary.textContent = `${active} 个进行中 · ${workers.length} 个总计`
+  workerList.replaceChildren()
+  if (!workers.length) {
+    const emptyWorkers = document.createElement('div')
+    emptyWorkers.className = 'worker-placeholder'
+    emptyWorkers.textContent = '暂无 Worker。聊天中的明确请求被接受后会显示在这里。'
+    workerList.append(emptyWorkers)
+    return
+  }
+  for (const worker of workers) {
+    const state = workerStatus(worker)
+    const card = document.createElement('button')
+    card.type = 'button'
+    card.className = `worker-card${selectedWorker === worker.ticketId ? ' selected' : ''}`
+    const statusText = document.createElement('span')
+    statusText.className = `worker-state ${state.kind}`
+    statusText.textContent = state.text
+    const title = document.createElement('span')
+    title.className = 'worker-card-title'
+    title.textContent = worker.title
+    const meta = document.createElement('span')
+    meta.className = 'worker-card-meta'
+    const progress = document.createElement('span')
+    progress.textContent = worker.progress?.state ?? worker.assignment?.state ?? '未启动'
+    const pending = document.createElement('span')
+    pending.textContent = worker.pendingInputs ? `${worker.pendingInputs} 条待投递` : '输入已投递'
+    meta.append(progress, pending)
+    card.append(statusText, title, meta)
+    card.addEventListener('click', () => { void showWorker(worker.ticketId).catch(error => { workerSummary.textContent = error instanceof Error ? error.message : String(error) }) })
+    workerList.append(card)
+  }
+}
+function renderWorker(worker) {
+  workerDetail.replaceChildren()
+  const state = workerStatus(worker)
+  const badge = document.createElement('span')
+  badge.className = `worker-state ${state.kind}`
+  badge.textContent = state.text
+  const title = document.createElement('h3')
+  title.textContent = worker.title
+  workerDetail.append(badge, title)
+  const facts = document.createElement('div')
+  facts.className = 'worker-facts'
+  const entries = [
+    ['Ticket', worker.ticketId],
+    ['Session', worker.session.streaming ? '正在执行' : worker.session.loaded ? '已加载，空闲' : '未加载'],
+    ['Assignment', worker.assignment ? `${worker.assignment.state} · ${worker.assignment.id}` : '无'],
+    ['待投递输入', String(worker.pendingInputs)],
+    ['工作目录', worker.directory ?? '无'],
+  ]
+  for (const [label, value] of entries) {
+    const item = document.createElement('div')
+    item.className = 'worker-fact'
+    const name = document.createElement('span')
+    name.textContent = label
+    const content = document.createElement('code')
+    content.textContent = value
+    item.append(name, content)
+    facts.append(item)
+  }
+  workerDetail.append(facts)
+  if (worker.delivery?.error || worker.attention?.question) {
+    const warning = document.createElement('pre')
+    warning.className = 'worker-error message-text'
+    warning.textContent = worker.delivery?.error ?? worker.attention.question
+    workerDetail.append(warning)
+  }
+  if (worker.progress) {
+    const section = document.createElement('section')
+    section.className = 'worker-section'
+    const heading = document.createElement('h4')
+    heading.textContent = `最新报告 · ${worker.progress.state} · ${new Date(worker.progress.at).toLocaleTimeString('zh-CN')}`
+    const body = document.createElement('div')
+    appendFormatted(body, worker.progress.summary)
+    section.append(heading, body)
+    workerDetail.append(section)
+  }
+  const activity = document.createElement('section')
+  activity.className = 'worker-section'
+  const heading = document.createElement('h4')
+  heading.textContent = `最近活动（${worker.recent.length} 条）`
+  activity.append(heading)
+  if (!worker.recent.length) {
+    const none = document.createElement('p')
+    none.className = 'worker-placeholder'
+    none.textContent = '暂无持久消息。'
+    activity.append(none)
+  }
+  for (const message of worker.recent) {
+    const item = document.createElement('article')
+    item.className = 'worker-activity'
+    const meta = document.createElement('div')
+    meta.className = 'worker-activity-meta'
+    const role = document.createElement('span')
+    role.textContent = message.role
+    const time = document.createElement('time')
+    time.textContent = message.at ? new Date(message.at).toLocaleTimeString('zh-CN') : ''
+    meta.append(role, time)
+    const body = document.createElement('div')
+    appendFormatted(body, message.text)
+    item.append(meta, body)
+    activity.append(item)
+  }
+  workerDetail.append(activity)
+}
+async function showWorker(ticketId) {
+  selectedWorker = ticketId
+  const version = ++workerDetailVersion
+  const response = await fetch(`/api/workers/${encodeURIComponent(ticketId)}`, { cache: 'no-store' })
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.error || 'Worker 详情读取失败')
+  if (version !== workerDetailVersion) return
+  const snapshot = JSON.stringify(data)
+  if (snapshot === workerDetailSnapshot) return
+  workerDetailSnapshot = snapshot
+  renderWorker(data)
+}
+async function refreshWorkers() {
+  if (refreshingWorkers) return
+  refreshingWorkers = true
+  try {
+    const response = await fetch('/api/workers', { cache: 'no-store' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Worker 列表读取失败')
+    renderWorkers(data.workers)
+    if (workerModal.open && selectedWorker) await showWorker(selectedWorker)
+  } catch (error) {
+    if (workerModal.open) workerSummary.textContent = error instanceof Error ? error.message : String(error)
+  } finally { refreshingWorkers = false }
+}
+workerButton.addEventListener('click', () => { workerModal.showModal(); void refreshWorkers() })
 function renderWeChat(data) {
   wechatState = data
   wechatButton.textContent = data.state === 'connected' ? '微信已连接' : '连接微信'
@@ -311,5 +465,7 @@ textarea.addEventListener('keydown', event => {
 updateSend()
 refresh()
 refreshWeChat()
+refreshWorkers()
+setInterval(refreshWorkers, 2000)
 setInterval(refreshWeChat, 2000)
 setInterval(refresh, 2000)

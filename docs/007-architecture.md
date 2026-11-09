@@ -42,7 +42,7 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 | Files | Area |
 | --- | --- |
 | `src/cli.ts`, `src/index.ts`, `src/deployment.ts`, `src/setup.ts`, `src/policy.ts`, `src/limits.ts`, `src/admission.ts`, `src/kv.ts` | Entry/configuration |
-| `src/app/runtime.ts`, `src/app/sessions.ts`, `src/app/delivery.ts`, `src/app/effects.ts`, `src/app/passes.ts`, `src/app/web.ts`, `src/app/wechat.ts`, `src/app/wechat-protocol.ts`, `web/index.html`, `web/app.js`, `web/style.css` | Runtime/Sessions/Web panel/WeChat |
+| `src/app/runtime.ts`, `src/app/sessions.ts`, `src/app/delivery.ts`, `src/app/effects.ts`, `src/app/passes.ts`, `src/app/web.ts`, `src/app/wechat.ts`, `src/app/wechat-protocol.ts`, `src/app/workers.ts`, `web/index.html`, `web/app.js`, `web/style.css` | Runtime/Sessions/Web panel/WeChat/Worker views |
 | `src/executor/omp.ts`, `src/app/execution-environment.ts`, `src/app/outbox.ts`, `src/app/notices.ts` | Domain execution |
 | `src/app/assessment.ts`, `src/app/resources.ts`, `src/app/cards.ts`, `src/app/context.ts`, `src/app/links.ts` | Assessment/resources |
 | `src/app/prompts.ts`, `src/app/skill-files.ts`, `src/app/cache.ts`, `src/app/versions.ts`, `src/app/store.ts`, `src/app/store-read.ts`, `src/app/source-context.ts` | Prompt/state helpers |
@@ -60,7 +60,7 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 
 | Files | Coverage |
 | --- | --- |
-| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts`, `tests/chat-source.spec.ts` | Real OMP Sessions/delivery, executor slots, Web API, WeChat iLink/CDN and chat Ticket flow |
+| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts`, `tests/chat-source.spec.ts`, `tests/worker-panel.spec.ts` | Real OMP Sessions/delivery, executor slots, Web API, WeChat iLink/CDN, chat Ticket flow and worker progress |
 | `tests/fixtures/omp-openai-server.ts`, `tests/fixtures/deployment.ts`, `tests/fixtures/git.ts`, `tests/fixtures/async.ts`, `tests/fixtures/web-panel-fixture.ts` | CLI/provider/browser fixtures |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/commands.spec.ts` | Deployment/environment/commands |
 | `tests/policy.spec.ts`, `tests/core-engine.spec.ts`, `tests/assessment.spec.ts` | Policy/engine/assessment |

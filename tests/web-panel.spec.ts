@@ -15,6 +15,7 @@ import { SettingsSchema } from '../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels, type OmpFixture } from './fixtures/omp-openai-server.ts'
 import { WeChatBridge } from '../src/app/wechat.ts'
 import { ChatSource } from '../src/sources/chat.ts'
+import { WorkerView } from '../src/app/workers.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 let dir: string
@@ -42,7 +43,7 @@ beforeEach(async () => {
   }, deliverWeChat: (id, text, userId) => wechat.deliver(id, text, userId) })
   wechat = new WeChatBridge({ store, chat })
   await wechat.start()
-  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat)
+  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat, new WorkerView(store, sessions))
   await panel.start()
 })
 afterEach(async () => {
@@ -137,7 +138,7 @@ it('rejects invalid base64 and too many attachments', async () => {
 })
 
 it('accepts same-origin browser requests on a wildcard LAN listener', async () => {
-  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat)
+  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat, new WorkerView(store, sessions))
   await lan.start()
   try {
     const url = lan.url.replace('0.0.0.0', '127.0.0.1')

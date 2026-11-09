@@ -69,6 +69,8 @@ The panel's **连接微信** button creates a local QR code through Tencent's iL
 
 Use **重置 Session** to start an empty orchestrator conversation without removing tickets or the WeChat binding. The action requires confirmation; after reset, the next message starts a new OMP transcript.
 
+Open **Worker** to inspect every background worker in a child window. The list combines Ticket/Assignment state with the real OMP Session's streaming state. Selecting a worker shows its directory, pending inputs, delivery errors, latest report, and recent persisted messages; completed workers remain readable from JSONL without restarting them.
+
 ### 3. Build and start
 
 ```sh
