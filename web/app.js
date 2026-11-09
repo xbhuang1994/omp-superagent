@@ -9,9 +9,14 @@ const send = document.querySelector('#send')
 const feedback = document.querySelector('#feedback')
 const fileInput = document.querySelector('#attachments')
 const attachmentList = document.querySelector('#attachment-list')
-const wechatButton = document.querySelector('#wechat-button')
+const settingsButton = document.querySelector('#settings-button')
+const settingsModal = document.querySelector('#settings-modal')
+const modelForm = document.querySelector('#model-form')
+const modelSave = document.querySelector('#model-save')
+const modelFeedback = document.querySelector('#model-feedback')
+const modelSelects = { eval: document.querySelector('#eval-model'), executor: document.querySelector('#executor-model') }
+const thinkingSelects = { eval: document.querySelector('#eval-thinking'), executor: document.querySelector('#executor-thinking') }
 const resetSession = document.querySelector('#reset-session')
-const wechatModal = document.querySelector('#wechat-modal')
 const wechatMessage = document.querySelector('#wechat-message')
 const wechatQr = document.querySelector('#wechat-qr')
 const wechatVerify = document.querySelector('#wechat-verify')
@@ -312,10 +317,79 @@ async function refreshWorkers() {
   } finally { refreshingWorkers = false }
 }
 workerButton.addEventListener('click', () => { workerModal.showModal(); void refreshWorkers() })
+function fillModelOptions(select, current, available) {
+  select.replaceChildren()
+  const fallback = document.createElement('option')
+  fallback.value = ''
+  fallback.textContent = '跟随 OMP 默认'
+  select.append(fallback)
+  for (const model of available) {
+    const option = document.createElement('option')
+    option.value = JSON.stringify([model.provider, model.id])
+    option.textContent = `${model.name} · ${model.provider}/${model.id}`
+    select.append(option)
+  }
+  if (current) {
+    const value = JSON.stringify([current.provider, current.model])
+    if (![...select.options].some(option => option.value === value)) {
+      const option = document.createElement('option')
+      option.value = value
+      option.textContent = `${current.provider}/${current.model}（当前）`
+      select.append(option)
+    }
+    select.value = value
+  } else select.value = ''
+}
+function renderModelSettings(data) {
+  for (const role of ['eval', 'executor']) {
+    fillModelOptions(modelSelects[role], data.current[role], data.available)
+    thinkingSelects[role].value = data.current[role]?.thinkingLevel ?? 'auto'
+  }
+}
+async function refreshModels() {
+  modelSave.disabled = true
+  try {
+    const response = await fetch('/api/settings/models', { cache: 'no-store' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || '模型配置读取失败')
+    renderModelSettings(data)
+  } catch (error) { modelFeedback.textContent = error instanceof Error ? error.message : String(error) }
+  finally { modelSave.disabled = false }
+}
+modelForm.addEventListener('submit', async event => {
+  event.preventDefault()
+  modelSave.disabled = true
+  modelFeedback.textContent = ''
+  try {
+    const selection = role => {
+      if (!modelSelects[role].value) return null
+      const [provider, model] = JSON.parse(modelSelects[role].value)
+      return { provider, model, thinkingLevel: thinkingSelects[role].value }
+    }
+    const response = await fetch('/api/settings/models', { method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eval: selection('eval'), executor: selection('executor') }) })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || '模型配置保存失败')
+    renderModelSettings(data)
+    modelFeedback.textContent = '已保存并应用'
+  } catch (error) { modelFeedback.textContent = error instanceof Error ? error.message : String(error) }
+  finally { modelSave.disabled = false }
+})
+for (const tab of document.querySelectorAll('[data-settings-tab]')) {
+  tab.addEventListener('click', () => {
+    for (const item of document.querySelectorAll('[data-settings-tab]')) {
+      const active = item === tab
+      item.classList.toggle('active', active)
+      item.setAttribute('aria-selected', String(active))
+    }
+    document.querySelector('#settings-models').hidden = tab.dataset.settingsTab !== 'models'
+    document.querySelector('#settings-wechat').hidden = tab.dataset.settingsTab !== 'wechat'
+    if (tab.dataset.settingsTab === 'wechat') void refreshWeChat()
+  })
+}
 function renderWeChat(data) {
   wechatState = data
-  wechatButton.textContent = data.state === 'connected' ? '微信已连接' : '连接微信'
-  wechatButton.classList.toggle('connected', data.state === 'connected')
+  wechatRefresh.textContent = ['waiting', 'scaned', 'verify'].includes(data.state) ? '重新获取二维码' : '连接微信'
   wechatMessage.textContent = data.senderId ? `${data.message} 发送者 ID：${data.senderId}` : data.message
   wechatQr.hidden = !data.qrCode || !['waiting', 'scaned', 'verify'].includes(data.state)
   if (data.qrCode) wechatQr.src = data.qrCode
@@ -333,7 +407,7 @@ async function wechatRequest(path, options) {
 async function refreshWeChat() {
   try { await wechatRequest('/api/wechat') }
   catch (error) {
-    if (wechatModal.open) wechatMessage.textContent = error instanceof Error ? error.message : String(error)
+    if (settingsModal.open) wechatMessage.textContent = error instanceof Error ? error.message : String(error)
   }
 }
 async function connectWeChat() {
@@ -342,10 +416,9 @@ async function connectWeChat() {
   catch (error) { wechatMessage.textContent = error instanceof Error ? error.message : String(error) }
   finally { wechatRefresh.disabled = false }
 }
-wechatButton.addEventListener('click', async () => {
-  wechatModal.showModal()
-  await refreshWeChat()
-  if (['disconnected', 'error'].includes(wechatState?.state)) await connectWeChat()
+settingsButton.addEventListener('click', async () => {
+  settingsModal.showModal()
+  await Promise.all([refreshModels(), refreshWeChat()])
 })
 wechatRefresh.addEventListener('click', connectWeChat)
 wechatDisconnect.addEventListener('click', async () => {

@@ -16,7 +16,7 @@ bun run build
 
 `stateDir` is required and absolute. `agentDir` is optional and defaults to `<stateDir>/omp`. Optional machine limits are `promptMaxChars` (default 100000), `admissionContextMaxPages` (10), and `admissionContextTimeoutMs` (15000). Unknown keys fail.
 
-The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, matching `SettingsSchema`. Startup JSON is their only source: there is no settings API or online editor. Changed values are saved on startup; policy changes create Inputs on open Tickets.
+The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, matching `SettingsSchema`. Startup JSON supplies initial settings; model selectors can also be managed in the settings window. Other changed values are saved on startup; policy changes create Inputs on open Tickets.
 
 ### Chat Source and ticket authorization
 
@@ -30,7 +30,7 @@ Set `sources.chat` to `{ "enabled": true, "config": {} }` and list sender IDs un
 
 ### WeChat channel
 
-No startup credentials are required. Open the Web panel and choose **连接微信**, then scan with WeChat `>=8.0.70` and confirm. `GET /api/wechat` reports connection state, `POST /api/wechat/connect` starts QR binding, `POST /api/wechat/verify` submits `{ "code": "1234" }` when requested, and `POST /api/wechat/disconnect` removes the binding. Only the bound user can send into the orchestrator. Text, image, file, video, and voice transcription are accepted inbound; final text replies and explicit `wechat_send_file` media are sent outbound. The 100 MiB media limit applies per item. Keep the state database to resume credentials and the delivery cursor after restart.
+No startup credentials are required. Open **设置 → 微信**, then scan with WeChat `>=8.0.70` and confirm. `GET /api/wechat` reports connection state, `POST /api/wechat/connect` starts QR binding, `POST /api/wechat/verify` submits `{ "code": "1234" }` when requested, and `POST /api/wechat/disconnect` removes the binding. Only the bound user can send into the orchestrator. Text, image, file, video, and voice transcription are accepted inbound; final text replies and explicit `wechat_send_file` media are sent outbound. The 100 MiB media limit applies per item. Keep the state database to resume credentials and the delivery cursor after restart.
 
 ### Role models
 
@@ -41,6 +41,8 @@ No startup credentials are required. Open the Web panel and choose **连接微�
 ```
 
 Levels are `auto`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` lets OMP choose reasoning effort per request. Explicit models must resolve through shared `ModelRegistry.find`; startup never substitutes another model. `null` uses OMP defaults only for a new Session and preserves the persisted selection after reopen. A changed non-null model overrides the transcript selection without persisting that override back into it.
+
+`GET /api/settings/models` returns current role models and the credential-aware `ModelRegistry.getAvailable()` catalog. `PUT /api/settings/models` accepts `{ "eval": RoleModel | null, "executor": RoleModel | null }`, validates both, applies them to loaded non-disposed Sessions, and saves them. Null selects OMP defaults for future Sessions without resetting an existing one. Startup records the config-file model baseline: unchanged config preserves online choices after restart; changing to a value different from that baseline wins. Reverting to the baseline alone does not clear an online selection. Runtime clones startup settings before applying this precedence.
 
 ## State layout
 

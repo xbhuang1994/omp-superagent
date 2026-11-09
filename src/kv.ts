@@ -2,6 +2,7 @@
  * Typed key-value store keys and key families grouped by the single component that owns and writes each family.
  * Readers and writers refer to a record by its entry here so each key is spelled once with its value type.
  */
+import type { RoleModel } from './policy.ts'
 import type { WeChatAccount } from './app/wechat-protocol.ts'
 import type { PromptVersion } from './app/prompts.ts'
 import type { SettingsVersion } from './app/store.ts'
@@ -31,7 +32,7 @@ export const KV = {
     /** The built-in text of a prompt part an override was edited from, by its `base`, which shows what an upgrade changed. */
     builtIn: family<string, [base: string]>('prompt-built-in:') },
   /** Runtime: the main Session's ID. */
-  runtime: { masterId: record<string>('master-id') },
+  runtime: { masterId: record<string>('master-id'), startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null }>('startup-models') },
   /** Sessions: OMP JSONL file by durable external alias. */
   sessions: { files: family<string, [alias: string]>('session-file:') },
   /** Per-Source resolved display names mapped from source-native IDs. */

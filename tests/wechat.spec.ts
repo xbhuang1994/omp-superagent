@@ -19,6 +19,7 @@ import { SettingsSchema } from '../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels } from './fixtures/omp-openai-server.ts'
 import { ChatSource } from '../src/sources/chat.ts'
 import { WorkerView } from '../src/app/workers.ts'
+import { ModelSettings } from '../src/app/model-settings.ts'
 import type { Trigger } from '../src/core/index.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -125,7 +126,7 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     }, deliverWeChat: (id, text, userId) => bridge!.deliver(id, text, userId) })
     bridge = new WeChatBridge({ store, chat }, protocol)
     await bridge.start()
-    panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, bridge, () => sessions.resetOrchestrator(), chat, new WorkerView(store, sessions))
+    panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, bridge, () => sessions.resetOrchestrator(), chat, new WorkerView(store, sessions), new ModelSettings(store, sessions))
     await panel.start()
 
     const connecting = await fetch(`${panel.url}api/wechat/connect`, { method: 'POST' })

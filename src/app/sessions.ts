@@ -17,6 +17,7 @@ import type { Prompts } from './prompts.ts'
 import { bundledSkills } from './skill-files.ts'
 import type { Store } from './store.ts'
 import type { Tool } from './tools/tool.ts'
+import type { RoleModel } from '../policy.ts'
 
 const SESSION_SETTINGS = {
   'async.enabled': false,
@@ -111,6 +112,27 @@ export class OMPSessions {
   }
 
   get(sessionId: string): AgentSession | undefined { return this.loaded.get(sessionId) }
+
+  async modelOptions(): Promise<{ id: string; provider: string; name: string }[]> {
+    await this.ready
+    await this.modelRegistry.refreshIfStale()
+    return this.modelRegistry.getAvailable().map(model => ({ id: model.id, provider: model.provider, name: model.name }))
+      .sort((left, right) => `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`))
+  }
+
+  /** Apply one validated role selector to loaded, non-disposed Sessions; null affects only future Sessions. */
+  async applyModel(role: 'orchestrator' | 'worker', selection: RoleModel | null): Promise<void> {
+    await this.ready
+    if (!selection) return
+    const model = this.modelRegistry.find(selection.provider, selection.model)
+    if (!model) throw new Error(`Unknown OMP model: ${selection.provider}/${selection.model}`)
+    const thinkingLevel = selection.thinkingLevel as never
+    for (const [sessionId, session] of this.loaded) {
+      if (session.isDisposed || (role === 'orchestrator') !== (sessionId === this.host.masterId)) continue
+      await session.setModel(model, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
+      session.setThinkingLevel(thinkingLevel, false)
+    }
+  }
 
   async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
     await this.ready

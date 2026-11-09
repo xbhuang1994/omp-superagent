@@ -22,9 +22,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9h2m-2 3h4m-5 8h12m-6-4v4m5-13h2m-2 3h2"/></svg>
           Worker <span id="worker-count" class="worker-count">0</span>
         </button>
-        <button id="wechat-button" class="control-button wechat-button" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 11.5h.01M15.5 11.5h.01M21 12a8 8 0 0 1-8 8 9 9 0 0 1-3.8-.8L4 21l1.5-4.2A8 8 0 1 1 21 12Z"/></svg>
-          连接微信
+        <button id="settings-button" class="control-button settings-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3v-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.4 7 7.2 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L20 7.2l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4h-.2a1.7 1.7 0 0 0-1.8.9Z"/></svg>
+          设置
         </button>
         <button id="reset-session" class="control-button reset-button" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5"/></svg>
@@ -72,19 +72,52 @@
     </form>
   </main>
 
-  <dialog id="wechat-modal" class="wechat-modal" aria-labelledby="wechat-title">
+  <dialog id="settings-modal" class="settings-modal" aria-labelledby="settings-title">
     <form method="dialog" class="dialog-close"><button type="submit" aria-label="关闭">×</button></form>
-    <span class="dialog-kicker">WECHAT CHANNEL</span>
-    <h2 id="wechat-title">连接微信</h2>
-    <p id="wechat-message" role="status">正在获取连接状态…</p>
-    <img id="wechat-qr" class="wechat-qr" alt="微信连接二维码" hidden>
-    <form id="wechat-verify" class="wechat-verify" hidden>
-      <label for="wechat-code">手机微信显示的验证码</label>
-      <div><input id="wechat-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]+" required><button type="submit">提交验证码</button></div>
-    </form>
-    <div class="dialog-actions">
-      <button id="wechat-disconnect" class="danger" type="button" hidden>断开微信</button>
-      <button id="wechat-refresh" type="button">重新获取二维码</button>
+    <span class="dialog-kicker">CONFIGURATION</span>
+    <h2 id="settings-title">设置</h2>
+    <div class="settings-layout">
+      <nav class="settings-tabs" aria-label="设置分类">
+        <button class="settings-tab active" type="button" data-settings-tab="models" role="tab" aria-selected="true">模型</button>
+        <button class="settings-tab" type="button" data-settings-tab="wechat" role="tab" aria-selected="false">微信</button>
+      </nav>
+      <section id="settings-models" class="settings-page" role="tabpanel">
+        <h3>模型配置</h3>
+        <p class="settings-intro">分别选择 orchestrator 和后台 worker 使用的模型。保存后立即应用，并跨重启保留。</p>
+        <form id="model-form" class="model-form">
+          <fieldset class="model-card">
+            <legend>Orchestrator</legend>
+            <label for="eval-model">评估与路由模型</label>
+            <select id="eval-model"><option value="">跟随 OMP 默认</option></select>
+            <label for="eval-thinking">Thinking level</label>
+            <select id="eval-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
+          </fieldset>
+          <fieldset class="model-card">
+            <legend>Worker</legend>
+            <label for="executor-model">后台执行模型</label>
+            <select id="executor-model"><option value="">跟随 OMP 默认</option></select>
+            <label for="executor-thinking">Thinking level</label>
+            <select id="executor-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
+          </fieldset>
+          <div class="model-actions"><span id="model-feedback" class="feedback" role="status"></span><button id="model-save" type="submit">保存并应用</button></div>
+        </form>
+      </section>
+      <section id="settings-wechat" class="settings-page" role="tabpanel" hidden>
+        <h3>微信连接</h3>
+        <p class="settings-intro">使用微信扫码绑定当前会话。绑定后可在微信中对话、发送图片和文件。</p>
+        <div class="wechat-settings-content">
+          <p id="wechat-message" role="status">正在获取连接状态…</p>
+          <img id="wechat-qr" class="wechat-qr" alt="微信连接二维码" hidden>
+          <form id="wechat-verify" class="wechat-verify" hidden>
+            <label for="wechat-code">手机微信显示的验证码</label>
+            <div><input id="wechat-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]+" required><button type="submit">提交验证码</button></div>
+          </form>
+          <div class="dialog-actions">
+            <button id="wechat-disconnect" class="danger" type="button" hidden>断开微信</button>
+            <button id="wechat-refresh" type="button">连接微信</button>
+          </div>
+        </div>
+      </section>
     </div>
   </dialog>
 

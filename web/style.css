@@ -330,6 +330,36 @@ textarea::placeholder { color: #65748a; }
 .dialog-actions button { padding: 9px 13px; font-size: 12px; }
 button.danger { border-color: #703f48; background: #382128; color: #f1a8b0; }
 button.danger:hover:not(:disabled) { border-color: #99525d; background: #49262e; }
+.settings-modal {
+  width: min(780px, calc(100% - 32px));
+  min-height: min(540px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  border: 1px solid #354258;
+  border-radius: 20px;
+  padding: 25px;
+  background: #111a28;
+  color: var(--text);
+  box-shadow: 0 28px 90px #0009;
+}
+.settings-modal::backdrop { background: #030710c9; backdrop-filter: blur(7px); }
+.settings-modal h2 { margin: 0 0 20px; font-size: 21px; }
+.settings-layout { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 24px; }
+.settings-tabs { display: flex; flex-direction: column; gap: 6px; }
+.settings-tab { justify-content: flex-start; border-color: transparent; background: transparent; color: #8998ad; font-size: 13px; }
+.settings-tab:hover:not(:disabled), .settings-tab.active { background: #1b2738; color: #d4ddef; }
+.settings-page h3 { margin: 0 0 8px; font-size: 17px; }
+.settings-intro { margin: 0 0 19px; color: #8c9baf; font-size: 12px; line-height: 1.7; }
+.model-form { display: grid; gap: 13px; }
+.model-card { min-width: 0; margin: 0; padding: 16px; border: 1px solid #2a384d; border-radius: 13px; background: #0d1623; }
+.model-card legend { padding: 0 6px; color: #b8c4d6; font-size: 12px; font-weight: 700; }
+.model-card label { display: block; margin: 10px 0 6px; color: #8999ae; font-size: 11px; }
+.model-card select { width: 100%; border: 1px solid #35445a; border-radius: 9px; padding: 10px 11px; background: #111c2b; color: #dce5f2; font: inherit; font-size: 12px; }
+.model-card select:focus-visible { outline: 2px solid #8298ff; outline-offset: 2px; }
+.model-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 3px; }
+.model-actions button { padding: 9px 14px; font-size: 12px; }
+.wechat-settings-content { border: 1px solid #2a384d; border-radius: 13px; padding: 18px; background: #0d1623; }
+.wechat-settings-content > p { margin: 0; color: #a7b6c9; font-size: 13px; line-height: 1.7; }
 .worker-count { min-width: 19px; padding: 1px 5px; border-radius: 999px; background: #2b3a50; color: #cbd6e7; font-size: 10px; text-align: center; }
 .worker-modal {
   width: min(940px, calc(100% - 32px));
@@ -385,6 +415,9 @@ button.danger:hover:not(:disabled) { border-color: #99525d; background: #49262e;
   .upload-hint { display: none; }
   .worker-layout { grid-template-columns: 1fr; grid-template-rows: minmax(130px, 32%) minmax(0, 1fr); }
   .worker-modal { padding: 20px; }
+  .settings-layout { grid-template-columns: 1fr; gap: 17px; }
+  .settings-tabs { flex-direction: row; }
+  .settings-tab { justify-content: center; }
 }
 @media (max-width: 480px) {
   body { background: var(--panel-soft); }
@@ -407,6 +440,7 @@ button.danger:hover:not(:disabled) { border-color: #99525d; background: #49262e;
   textarea { min-height: 80px; }
   .upload-hint { display: none; }
   .wechat-modal { padding: 24px 20px; }
+  .settings-modal { width: calc(100% - 16px); min-height: calc(100dvh - 16px); padding: 18px; border-radius: 15px; }
   .worker-modal { width: calc(100% - 16px); height: calc(100dvh - 16px); padding: 16px; border-radius: 15px; }
   .worker-facts { grid-template-columns: 1fr; }
 }

@@ -33,6 +33,7 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { WebPanel } from './web.ts'
 import { WeChatBridge } from './wechat.ts'
 import { WorkerView } from './workers.ts'
+import { ModelSettings } from './model-settings.ts'
 import { ChatSource } from '../sources/chat.ts'
 
 const now = (): string => new Date().toISOString()
@@ -73,7 +74,7 @@ export class Runtime implements SourceHost {
   private readonly startup: SettingsValue
 
   constructor(readonly machine: Machine, startup: SettingsValue = SettingsSchema.parse({})) {
-    this.startup = SettingsSchema.parse({ paused: startup.paused, sources: startup.sources, policy: startup.policy, eval: startup.eval, executor: startup.executor })
+    this.startup = structuredClone(SettingsSchema.parse({ paused: startup.paused, sources: startup.sources, policy: startup.policy, eval: startup.eval, executor: startup.executor }))
     mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
     const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
     const release = lockSync(machine.stateDir, { stale: 30_000, onCompromised: compromised })
@@ -82,6 +83,15 @@ export class Runtime implements SourceHost {
     try {
       const report = (error: unknown) => { console.warn(`omp-superagent: ${String(error)}`) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
+      const configuredModels = { eval: this.startup.eval.model, executor: this.startup.executor.model }
+      const baseline = store.get(KV.runtime.startupModels)
+      if (baseline) {
+        const saved = store.settings()
+        for (const role of ['eval', 'executor'] as const) {
+          if (JSON.stringify(configuredModels[role]) === JSON.stringify(baseline[role])) this.startup[role].model = saved[role].model
+        }
+      }
+      store.set(KV.runtime.startupModels, configuredModels)
       const path = withoutDirectory(process.env.PATH ?? '', workerBin(machine.stateDir))
       this.commandEnvironment = { ...agentVariables(machine.stateDir), PATH: path }
       const sources = this.sources = new SourceRegistry(() => store.settings(), this.board)
@@ -107,7 +117,8 @@ export class Runtime implements SourceHost {
         deliverWeChat: (id, text, userId) => this.wechat.deliver(id, text, userId) })
       sources.register(chat.kind())
       this.wechat = new WeChatBridge({ store, chat })
-      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator(), chat, workers)
+      const modelSettings = new ModelSettings(store, sessions)
+      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator(), chat, workers, modelSettings)
       this.executor = new OMPExecutor({ get engine() { return runtime.engine }, store, effects, health: this.board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
