@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -156,6 +156,10 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     expect(transcript).toContain('.._notes.txt')
     expect(transcript).not.toContain('不得投递')
     expect(JSON.stringify(provider.requests)).toContain('image_url')
+    const imagePath = join(dir, 'attachments', 'chat-wechat-media-1', '1-wechat-media-1.jpg')
+    expect(await readFile(imagePath)).toEqual(wechatServer.image)
+    expect(triggers.find(trigger => trigger.meta.messageId === 'wechat:media-1')?.text).toContain(`path="${imagePath}"`)
+    expect(transcript).toContain(`"kind":"image"`)
     expect(sessions.get('main')?.sessionManager.getBranch().filter(entry => entry.type === 'custom_message' && JSON.stringify(entry.details).includes('"requestId":"chat:wechat:9007199254740993"'))).toHaveLength(1)
     const panelMessages = await (await fetch(`${panel.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
     expect(panelMessages.messages.find(message => message.text === '微信文本')?.role).toBe('user')
