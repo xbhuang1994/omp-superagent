@@ -63,6 +63,18 @@ export class AgentDelivery {
     const state = this.states.get(session)
     return persisted(session, requestId) || !!state?.pending.has(requestId)
   }
+  /** Append a visible custom message without queuing, steering, or starting a turn, even while the agent is busy. */
+  async append(session: AgentSession, requestId: string, content: DeliveryContent,
+    presentation: { display: boolean; attribution: 'agent' | 'user'; source: string; attachments?: { name: string; mediaType: string }[] }): Promise<void> {
+    if (session.isDisposed) throw new Error('Append target was disposed')
+    if (persisted(session, requestId)) { await session.flushToDisk(); return }
+    const details = { requestId, source: presentation.source, ...presentation.attachments?.length ? { attachments: presentation.attachments } : {} }
+    const message = { role: 'custom' as const, customType: 'omp-superagent', content, display: presentation.display,
+      details, attribution: presentation.attribution, timestamp: Date.now() }
+    if (!session.isStreaming) session.agent.appendMessage(message)
+    session.sessionManager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details, message.attribution)
+    await session.flushToDisk()
+  }
 
   async send(session: AgentSession, requestId: string, content: DeliveryContent, mode: 'queue' | 'steer' | { inject: string }, signal: AbortSignal,
     inputIds: string[] | undefined, authorize?: () => void, accepted?: () => void,
@@ -116,9 +128,7 @@ export class AgentDelivery {
     if (persisted(session, requestId)) markVisible()
     if (typeof mode === 'object') {
       try { await running } catch (error) {
-        if (!persisted(session, requestId)) {
-          fail(error instanceof Error ? error : new Error(String(error)))
-        }
+        if (!persisted(session, requestId)) fail(error instanceof Error ? error : new Error(String(error)))
       }
       if (persisted(session, requestId)) markVisible()
     }

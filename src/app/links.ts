@@ -47,6 +47,8 @@ export async function candidateCard(host: LinkHost, candidate: Candidate) {
     mode: settings.eval.mode, ...others.length ? { batch: others.map(trigger => triggerCard(trigger)) } : {},
     ...handedBack.length ? { handed_back: handedBack } : {}, ...relatedTickets(candidate.tickets),
     ...(delivered.length ? { delivered_to: delivered } : {}), ...(referenced.length ? { referenced_tickets: referenced.map(ticketCard) } : {}),
-    next_action: candidate.strength === 'explicit' ? 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore.'
+    next_action: candidate.strength === 'explicit' ? primary.source === 'chat'
+      ? 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore. If ordinary conversation needs no ticket, ignore it, then answer naturally in the source language and tone with orchestrator_reply purpose=answer and this trigger_id; do not use a stock no-ticket response.'
+      : 'Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore.'
       : 'Ignore it with orchestrator_route if the card shows it touches no enabled rule; else assess it with orchestrator_eval, orchestrator_eval_read, then orchestrator_eval_decide.' }
 }

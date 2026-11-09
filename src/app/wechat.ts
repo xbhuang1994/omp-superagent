@@ -5,15 +5,15 @@ import { basename } from 'node:path'
 import { toDataURL } from 'qrcode'
 import { KV } from '../kv.ts'
 import type { Store } from './store.ts'
-import type { ChatAttachment, OMPSessions } from './sessions.ts'
+import type { ChatAttachment } from './sessions.ts'
+import type { ChatSource } from '../sources/chat.ts'
 import { WeChatProtocol, weChatMime, type WeChatAccount, type WeChatMessage, type WeChatQr } from './wechat-protocol.ts'
 
 export type WeChatState = 'disconnected' | 'waiting' | 'scaned' | 'verify' | 'connected' | 'error'
-export interface WeChatStatus { state: WeChatState; message: string; qrCode?: string }
+export interface WeChatStatus { state: WeChatState; message: string; qrCode?: string; senderId?: string }
 interface WeChatHost {
   store: Pick<Store, 'get' | 'set' | 'delete'>
-  sessions: Pick<OMPSessions, 'chat' | 'onReply'>
-  masterId: string
+  chat: Pick<ChatSource, 'receiveWeChat'>
 }
 interface ActiveLogin { qr: WeChatQr; baseUrl: string; verifyCode?: string; controller: AbortController }
 interface ActiveMonitor { controller: AbortController; task: Promise<void> }
@@ -34,35 +34,27 @@ export class WeChatBridge {
   private loginTask?: Promise<void>
   private connecting?: Promise<WeChatStatus>
   private monitor?: ActiveMonitor
-  private unsubscribe?: () => void
-  private outbound: Promise<void> = Promise.resolve()
   constructor(private readonly host: WeChatHost, private readonly protocol = new WeChatProtocol()) {
     this.state = host.store.get(KV.wechat.account)
       ? { state: 'disconnected', message: '发现已保存的微信绑定，启动后自动恢复。' }
       : { state: 'disconnected', message: '尚未连接微信。' }
   }
 
-  status(): WeChatStatus { return { ...this.state } }
+  status(): WeChatStatus {
+    const account = this.host.store.get(KV.wechat.account)
+    return { ...this.state, ...account ? { senderId: `wechat:${account.userId}` } : {} }
+  }
   async start(): Promise<void> {
-    this.rebind()
     const account = this.host.store.get(KV.wechat.account)
     if (account) {
       this.state = { state: 'connected', message: '微信绑定已恢复。' }
       this.startMonitor(account)
     }
   }
-
-  /** Reattach final-reply delivery after the main Session is replaced. */
-  rebind(): void {
-    this.unsubscribe?.()
-    this.unsubscribe = this.host.sessions.onReply(this.host.masterId, text => { this.sendReply(text) })
-  }
   async stop(): Promise<void> {
-    this.unsubscribe?.()
-    this.unsubscribe = undefined
     this.login?.controller.abort()
     this.monitor?.controller.abort()
-    await Promise.allSettled([...this.loginTask ? [this.loginTask] : [], ...this.monitor ? [this.monitor.task] : [], this.outbound])
+    await Promise.allSettled([...this.loginTask ? [this.loginTask] : [], ...this.monitor ? [this.monitor.task] : []])
   }
 
   async connect(): Promise<WeChatStatus> {
@@ -222,17 +214,16 @@ export class WeChatBridge {
       if (attachment) attachments.push(attachment)
     }
     if (!text.length && !attachments.length) return
-    await this.host.sessions.chat(this.host.masterId, text.join('\n'), attachments, { requestId: `wechat:${id}`, source: 'wechat' })
+    const at = typeof message.create_time_ms === 'number' ? new Date(message.create_time_ms).toISOString() : undefined
+    await this.host.chat.receiveWeChat(account.userId, `wechat:${id}`, text.join('\n'), attachments, at)
   }
 
-  private sendReply(text: string): void {
-    if (!text) return
-    this.outbound = this.outbound.then(async () => {
-      const account = this.host.store.get(KV.wechat.account)
-      if (account) await this.protocol.sendText(account, text)
-    }).catch((error: unknown) => {
-      if (this.host.store.get(KV.wechat.account)) this.state = { state: 'connected', message: `微信回复发送失败：${textOf(error)}` }
-    })
+  /** Deliver one Outbox message only to its original bound user; stable ID makes retries idempotent. */
+  async deliver(id: string, text: string, userId: string): Promise<'sent' | 'gone'> {
+    const account = this.host.store.get(KV.wechat.account)
+    if (!account || account.userId !== userId) return 'gone'
+    await this.protocol.sendText(account, text, id)
+    return 'sent'
   }
   async sendFile(path: string, caption = ''): Promise<{ sent: true; name: string }> {
     const account = this.host.store.get(KV.wechat.account)

@@ -14,6 +14,7 @@ import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels, type OmpFixture } from './fixtures/omp-openai-server.ts'
 import { WeChatBridge } from '../src/app/wechat.ts'
+import { ChatSource } from '../src/sources/chat.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 let dir: string
@@ -22,6 +23,7 @@ let store: Store
 let sessions: OMPSessions
 let panel: WebPanel
 let wechat: WeChatBridge
+let chat: ChatSource
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'omp-web-panel-'))
   server = await startOmpOpenAIServer(() => ({ content: 'Panel reply' }))
@@ -34,9 +36,13 @@ beforeEach(async () => {
     closing: () => false, environment: () => [], engine: { inputsDelivered: () => {}, inputsRead: () => {} }, tools: () => [] })
   await sessions.ready
   await sessions.ensure('main', dir, 'Main', 'orchestrator')
-  wechat = new WeChatBridge({ store, sessions, masterId: 'main' })
+  chat = new ChatSource({ sessions, masterId: 'main', receive: async trigger => {
+    await sessions.prompt('main', `candidate:${trigger.id}`, JSON.stringify({ kind: 'candidate', trigger_id: trigger.id, text: trigger.text }), 'steer')
+    return 'stored' as const
+  }, deliverWeChat: (id, text, userId) => wechat.deliver(id, text, userId) })
+  wechat = new WeChatBridge({ store, chat })
   await wechat.start()
-  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat, async () => { await sessions.resetOrchestrator(); wechat.rebind() })
+  panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat)
   await panel.start()
 })
 afterEach(async () => {
@@ -56,7 +62,6 @@ it('serves a secure static panel and persists a real OMP chat round trip', async
   const response = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text: 'Hello panel' }) })
   expect(response.status).toBe(202)
-  expect((await response.json()).requestId).toMatch(/^web:/)
   let messages: { role: string; text: string }[] = []
   await vi.waitFor(async () => {
     const result = await fetch(`${panel.url}api/messages`)
@@ -132,7 +137,7 @@ it('rejects invalid base64 and too many attachments', async () => {
 })
 
 it('accepts same-origin browser requests on a wildcard LAN listener', async () => {
-  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat, async () => { await sessions.resetOrchestrator(); wechat.rebind() })
+  const lan = new WebPanel({ enabled: true, host: '0.0.0.0', port: 0 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat)
   await lan.start()
   try {
     const url = lan.url.replace('0.0.0.0', '127.0.0.1')
@@ -149,7 +154,6 @@ it('starts Runtime and accepts chat with no GitHub configuration', async () => {
   const runtime = new Runtime(machineOf(config), config)
   try {
     await runtime.ready
-    expect(runtime.configured()).toBe(false)
     expect((await fetch(`${runtime.web.url}api/health`)).status).toBe(200)
     const response = await fetch(`${runtime.web.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'Web only' }) })

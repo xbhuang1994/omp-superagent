@@ -10,6 +10,7 @@ import { HealthBoard } from '../../src/infra/health.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels } from './omp-openai-server.ts'
 import { WeChatBridge } from '../../src/app/wechat.ts'
+import { ChatSource } from '../../src/sources/chat.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'omp-web-browser-'))
 const provider = await startOmpOpenAIServer(() => ({ content: '浏览器回复：你好，OMP 已收到。' }))
@@ -22,9 +23,13 @@ const sessions = new OMPSessions({ store, prompts: new Prompts(store, () => 1000
   engine: { inputsDelivered: () => {}, inputsRead: () => {} }, tools: () => [] })
 await sessions.ready
 await sessions.ensure('main', dir, 'Main', 'orchestrator')
-const wechat = new WeChatBridge({ store, sessions, masterId: 'main' })
+const chat: ChatSource = new ChatSource({ sessions, masterId: 'main', receive: async trigger => {
+  await sessions.prompt('main', `candidate:${trigger.id}`, JSON.stringify({ kind: 'candidate', trigger_id: trigger.id, text: trigger.text }), 'steer')
+  return 'stored' as const
+}, deliverWeChat: (id, text, userId) => wechat.deliver(id, text, userId) })
+const wechat: WeChatBridge = new WeChatBridge({ store, chat })
 await wechat.start()
-const panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 3082 }, 'main', sessions, wechat, async () => { await sessions.resetOrchestrator(); wechat.rebind() })
+const panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 3082 }, 'main', sessions, wechat, () => sessions.resetOrchestrator(), chat)
 await panel.start()
 console.log(panel.url)
 process.once('SIGINT', async () => {

@@ -32,6 +32,7 @@ import { mainTools, type MainToolsHost } from './tools/main.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 import { WebPanel } from './web.ts'
 import { WeChatBridge } from './wechat.ts'
+import { ChatSource } from '../sources/chat.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -51,6 +52,7 @@ export class Runtime implements SourceHost {
   readonly ready: Promise<void>
   readonly web: WebPanel
   readonly wechat: WeChatBridge
+  readonly chat: ChatSource
   readonly masterId: string
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
@@ -99,13 +101,16 @@ export class Runtime implements SourceHost {
           inputsRead: (ticketId, inputIds) => this.engine.inputsRead(ticketId, inputIds),
         },
         tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, sessionId) })
-      this.wechat = new WeChatBridge({ store, sessions, masterId })
-      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator())
+      const chat = this.chat = new ChatSource({ sessions, masterId, receive: trigger => this.receive(trigger),
+        deliverWeChat: (id, text, userId) => this.wechat.deliver(id, text, userId) })
+      sources.register(chat.kind())
+      this.wechat = new WeChatBridge({ store, chat })
+      this.web = new WebPanel(machine.web, masterId, sessions, this.wechat, () => this.resetOrchestrator(), chat)
       this.executor = new OMPExecutor({ get engine() { return runtime.engine }, store, effects, health: this.board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
       const runtime = this
-      this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return runtime.deployment }, effects,
+      this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, machine, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
@@ -131,7 +136,7 @@ export class Runtime implements SourceHost {
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return runtime.deployment }, configured: () => this.configured(), receive: trigger => passes.receive(trigger) }
       this.toolHost = { logger: { warn: message => console.warn(message) }, engine, store, sessions, assessor: this.assessor, resources,
-        get github() { return runtime.context(githubKind) }, requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
+        get github() { return runtime.resolved ? runtime.context(githubKind) : undefined }, requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         get wechat() { return runtime.wechat },
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize().catch(async error => { await this.stop(); throw error })
@@ -147,17 +152,14 @@ export class Runtime implements SourceHost {
     if (!this.resolved) throw new Error('omp-superagent GitHub deployment is not ready')
     return this.resolved
   }
-  configured(): boolean { return this.resolved !== undefined }
+  configured(): boolean { return this.resolved !== undefined || this.sources.instance('chat')?.enabled === true }
   context(kind: { kind: string; health: readonly string[] }): SourceContext { return sourceContextOf(this.sourceDeps, kind) }
-  links() { return (channel: Parameters<SourceRegistry['link']>[0]) => this.sources.link(channel, { repository: this.deployment.repository }) }
+  links() { return (channel: Parameters<SourceRegistry['link']>[0]) => this.sources.link(channel, { repository: this.resolved?.repository }) }
   ticketEnvironment(ticket: Ticket): Variable[] {
     const trigger = sourceTrigger(this, ticket)
-    return ticketEnvironment({ deployment: this.deployment, sources: this.sources, settings: this.store.settings(), ticket, ...trigger ? { trigger } : {} })
+    return ticketEnvironment({ deployment: this.resolved, sources: this.sources, settings: this.store.settings(), ticket, ...trigger ? { trigger } : {} })
   }
-  async resetOrchestrator(): Promise<void> {
-    await this.sessions.resetOrchestrator()
-    this.wechat.rebind()
-  }
+  async resetOrchestrator(): Promise<void> { await this.sessions.resetOrchestrator() }
   receive(trigger: Trigger): ReceiveResult { return this.passes.receive(trigger) }
   idle(): Promise<void> { return this.passes.idle() }
   pump(): Promise<void> { return this.passes.pump() }

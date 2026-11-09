@@ -6,6 +6,22 @@
     "host": "0.0.0.0",
     "port": 3082
   },
+  "sources": {
+    "chat": {
+      "enabled": true,
+      "config": {}
+    }
+  },
+  "policy": {
+    "sources": {
+      "chat": {
+        "allowed": [
+          { "id": "web:local" },
+          { "id": "wechat:o9cq808DstImiu-e6ey8nnWa6vzc@im.wechat" }
+        ]
+      }
+    }
+  },
   "eval": {
     "mode": "observe",
     "model": {

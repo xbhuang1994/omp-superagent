@@ -21,6 +21,7 @@ const wechatRefresh = document.querySelector('#wechat-refresh')
 let wechatState
 const rendered = new Set()
 let selected = []
+let pendingMessageId
 
 function render(messages) {
   for (const message of messages) {
@@ -83,7 +84,7 @@ function renderWeChat(data) {
   wechatState = data
   wechatButton.textContent = data.state === 'connected' ? '微信已连接' : '连接微信'
   wechatButton.classList.toggle('connected', data.state === 'connected')
-  wechatMessage.textContent = data.message
+  wechatMessage.textContent = data.senderId ? `${data.message} 发送者 ID：${data.senderId}` : data.message
   wechatQr.hidden = !data.qrCode || !['waiting', 'scaned', 'verify'].includes(data.state)
   if (data.qrCode) wechatQr.src = data.qrCode
   wechatVerify.hidden = data.state !== 'verify'
@@ -178,7 +179,7 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = ''
   showSelected()
 })
-textarea.addEventListener('input', updateSend)
+textarea.addEventListener('input', () => { pendingMessageId = undefined; updateSend() })
 
 function base64(file) {
   return new Promise((resolve, reject) => {
@@ -196,6 +197,9 @@ form.addEventListener('submit', async event => {
   send.disabled = true
   feedback.textContent = ''
   try {
+    const random = new Uint32Array(4)
+    crypto.getRandomValues(random)
+    const messageId = pendingMessageId ??= `web:${[...random].map(value => value.toString(16).padStart(8, '0')).join('')}`
     const attachments = await Promise.all(selected.map(async file => ({
       name: file.name,
       mediaType: file.type || '',
@@ -204,10 +208,11 @@ form.addEventListener('submit', async event => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text, attachments }),
+      body: JSON.stringify({ messageId, text, attachments }),
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || `发送失败 (${response.status})`)
+    pendingMessageId = undefined
     textarea.value = ''
     selected = []
     showSelected()

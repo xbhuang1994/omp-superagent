@@ -27,6 +27,7 @@ Example `config.json`:
   "stateDir": "/srv/omp-superagent/state",
   "agentDir": "/srv/omp-superagent/omp",
   "sources": {
+    "chat": { "enabled": true, "config": {} },
     "github": {
       "enabled": true,
       "config": {
@@ -38,6 +39,7 @@ Example `config.json`:
   },
   "policy": {
     "sources": {
+      "chat": { "allowed": [{ "id": "web:local" }] },
       "github": {
         "allowed": [{ "id": "your-github-login" }]
       }
@@ -61,7 +63,9 @@ Role models accept `null` or `{ "provider": "...", "model": "...", "thinkingLeve
 
 The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configuration. Omit `sources.github` for chat-only use. Configure it with `"web": { "enabled": true, "host": "127.0.0.1", "port": 3082 }`; set `enabled` to `false` to disable it or `port` to `0` for an ephemeral port. The CLI prints the actual URL. The server accepts loopback requests only and uses no remote assets or CORS. Upload any file type, up to 3 attachments per message and 5 MiB each. PNG/JPEG/WebP/GIF use native OMP image content; UTF-8 text up to 256 KiB is inlined; other and larger files are stored under `<stateDir>/attachments/<requestId>/` with their paths included in the message so OMP can inspect or transform them with `read`/`bash`.
 
-The panel's **连接微信** button creates a local QR code through Tencent's iLink Bot API. Scan and confirm with WeChat `>=8.0.70`; enter the phone verification code if requested. The bound WeChat user chats with the same persistent orchestrator Session, with text replies returned automatically and image/file/video attachments transferred through the encrypted WeChat CDN. The orchestrator can send a local file explicitly with `wechat_send_file`. Bindings and the long-poll cursor persist in `orchestrator.sqlite` and resume after restart; disconnecting removes only the binding and cursor, never the OMP transcript. Media is limited to 100 MiB per item.
+Web and WeChat messages use the `chat` Source. Each source message receives a host-derived `trigger_id` and follows the standard candidate → route → Ticket pipeline; no client or model creates IDs. Allowed senders' direct messages are explicit candidates, including chatter the orchestrator may ignore. Confirmations, attention questions, and results use durable Outbox receipts to the originating conversation. Configure `sources.chat.enabled` and `policy.sources.chat.allowed` separately. Web uses `web:local`; after WeChat binding, the dialog shows its `wechat:<user-id>` sender ID for the allowlist. Repeating the same source `messageId` is idempotent across retries and restarts.
+
+The panel's **连接微信** button creates a local QR code through Tencent's iLink Bot API. Scan and confirm with WeChat `>=8.0.70`; enter the phone verification code if requested. The bound WeChat user chats with the same persistent orchestrator Session, with durable ticket replies and image/file/video attachments transferred through the encrypted WeChat CDN. The orchestrator can send a local file explicitly with `wechat_send_file`. Bindings and the long-poll cursor persist in `orchestrator.sqlite` and resume after restart; disconnecting removes only the binding and cursor, never the OMP transcript. Media is limited to 100 MiB per item.
 
 Use **重置 Session** to start an empty orchestrator conversation without removing tickets or the WeChat binding. The action requires confirmation; after reset, the next message starts a new OMP transcript.
 

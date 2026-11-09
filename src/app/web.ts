@@ -5,6 +5,8 @@ import { extname } from 'node:path'
 import { packagePath } from '../infra/paths.ts'
 import type { ChatAttachment, OMPSessions } from './sessions.ts'
 import type { WeChatBridge } from './wechat.ts'
+import type { ChatSource } from '../sources/chat.ts'
+import type { AgentMessage } from '@oh-my-pi/pi-agent-core'
 
 interface AttachmentInfo { name: string; mediaType: string; kind: 'image' | 'text' | 'file' }
 interface PanelMessage { id: number; role: 'user' | 'assistant' | 'event'; text: string; at?: number; images?: { name: string; mediaType: string; data: string }[]; files?: AttachmentInfo[] }
@@ -67,8 +69,8 @@ export class WebPanel {
   private server?: Server
   private actualPort = 0
   constructor(private readonly options: WebOptions, private readonly masterId: string,
-    private readonly sessions: Pick<OMPSessions, 'get' | 'chat'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>,
-    private readonly resetSession: () => Promise<void>) {}
+    private readonly sessions: Pick<OMPSessions, 'get'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>,
+    private readonly resetSession: () => Promise<void>, private readonly chat: Pick<ChatSource, 'receiveWeb'>) {}
 
   get url(): string { return `http://${this.options.host}:${this.actualPort}/` }
 
@@ -122,8 +124,10 @@ export class WebPanel {
           : []
         if (attachments.length > MAX_FILES) return this.json(response, 400, { error: `At most ${MAX_FILES} attachments` })
         if ((!text && attachments.length === 0) || text.length > 8000) return this.json(response, 400, { error: 'Message or attachment required; text limit 8000 characters' })
-        const requestId = await this.sessions.chat(this.masterId, text, attachments)
-        return this.json(response, 202, { requestId })
+        const messageId = 'messageId' in parsed && parsed.messageId !== undefined ? parsed.messageId : undefined
+        if (messageId !== undefined && typeof messageId !== 'string') return this.json(response, 400, { error: 'messageId must be a string' })
+        const receipt = await this.chat.receiveWeb(text, attachments, messageId)
+        return this.json(response, 202, receipt)
       }
       if (request.method === 'GET' && (path === '/' || path === '/app.js' || path === '/style.css')) {
         const file = path === '/' ? 'index.html' : path.slice(1)
@@ -140,12 +144,14 @@ export class WebPanel {
   }
 
   private messages(): PanelMessage[] {
-    const messages = this.sessions.get(this.masterId)?.messages ?? []
+    const session = this.sessions.get(this.masterId)
+    const messages = session?.sessionManager.getBranch().flatMap<AgentMessage>(entry => entry.type === 'message' ? [entry.message]
+      : entry.type === 'custom_message' ? [{ ...entry, timestamp: Date.parse(entry.timestamp), role: 'custom' as const }] : []) ?? []
     return messages.flatMap((message, index) => {
       const text = messageText(message)
       if (!text) return []
       const source = message.role === 'custom' && message.details && typeof message.details === 'object' && 'source' in message.details ? message.details.source : undefined
-      const role = message.role === 'assistant' ? 'assistant' : message.role === 'custom' && source !== 'web-panel' && source !== 'wechat' ? 'event' : 'user'
+      const role = message.role === 'assistant' || source === 'chat-reply' ? 'assistant' : message.role === 'custom' && source !== 'web-panel' && source !== 'wechat' ? 'event' : 'user'
       const at = 'timestamp' in message && typeof message.timestamp === 'number' ? message.timestamp : undefined
       const images = messageImages(message)
       const files = messageAttachments(message).filter(attachment => attachment.kind !== 'image')

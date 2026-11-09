@@ -18,10 +18,10 @@ Application messages use hidden custom messages, never host inbox objects. Each 
 
 `transcript(ticketId)` returns OMP `AgentMessage[]`, supporting resource pagination/previews. `stopAll()` begins disposal on all loaded Sessions before awaiting any cleanup, preventing queued work from starting another turn.
 
-The Web panel's reset action disposes the current orchestrator, removes only its alias-to-JSONL mapping, and creates an empty Session under the same durable alias. Domain state, worker Sessions, attachments, and WeChat credentials/cursor survive. WeChat final-reply delivery is rebound to the replacement Session.
+The Web panel's reset action disposes the current orchestrator, removes only its alias-to-JSONL mapping, and creates an empty Session under the same durable alias. Domain state, worker Sessions, attachments, Source Triggers, and WeChat credentials/cursor survive. Outbox delivery needs no Session event subscription and continues into the replacement transcript.
 
 ## Web and WeChat chat
 
-Visible chat messages use the same durable custom-entry delivery as other application messages. Web requests generate `web:<uuid>` IDs; WeChat uses `wechat:<message_id>` so redelivery after a crash cannot create another turn. Both use native image content, inline UTF-8 text, or durable files as appropriate.
+Visible chat messages use idempotent custom entries with no model turn. `ChatSource` renders attachments, persists the user entry, derives `trigger_id` from the source `messageId`, and calls Engine intake. Web requests use `web:<uuid>`; WeChat uses `wechat:<message_id>`. Native image content, inline UTF-8 text, and durable files retain their existing presentation.
 
-`WeChatBridge` accepts direct messages only from the user ID captured during QR binding. It advances the persisted iLink cursor only after Session delivery reaches the disk barrier. Final assistant text from each yielded orchestrator run is sent to the bound user; `wechat_send_file` sends a verified local image, video, or file. Credentials, bound user, context token, and cursor live in SQLite and are never exposed by the Web API.
+`WeChatBridge` accepts direct messages only from the user ID captured during QR binding and advances the iLink cursor only after Trigger intake. Confirmations, answers, attention, and results travel through Outbox to the originating Web or WeChat conversation; no final-assistant listener forwards unrelated replies. Web publication uses stable `chat-reply:<outbound-id>` entries, while iLink uses the OutboundMessage ID as its client ID. `wechat_send_file` sends a verified local image, video, or file. Credentials, bound user, context token, and cursor live in SQLite and are never exposed by the Web API.

@@ -17,6 +17,8 @@ import { HealthBoard } from '../src/infra/health.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels } from './fixtures/omp-openai-server.ts'
+import { ChatSource } from '../src/sources/chat.ts'
+import type { Trigger } from '../src/core/index.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 const encrypted = (data: Buffer, key: Buffer): Buffer => {
@@ -113,9 +115,16 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     await sessions.ready
     await sessions.ensure('main', dir, 'Main', 'orchestrator')
     const protocol = new WeChatProtocol({ apiBaseUrl: wechatServer.base, cdnBaseUrl: `${wechatServer.base}cdn` })
-    bridge = new WeChatBridge({ store, sessions, masterId: 'main' }, protocol)
+    const triggers: Trigger[] = []
+    const chat = new ChatSource({ sessions, masterId: 'main', receive: async trigger => {
+      if (triggers.some(item => item.id === trigger.id)) return 'duplicate' as const
+      triggers.push(trigger)
+      await sessions.prompt('main', `candidate:${trigger.id}`, JSON.stringify({ kind: 'candidate', trigger_id: trigger.id, text: trigger.text }), 'steer')
+      return 'stored' as const
+    }, deliverWeChat: (id, text, userId) => bridge!.deliver(id, text, userId) })
+    bridge = new WeChatBridge({ store, chat }, protocol)
     await bridge.start()
-    panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, bridge, async () => { await sessions.resetOrchestrator(); bridge!.rebind() })
+    panel = new WebPanel({ enabled: true, host: '127.0.0.1', port: 0 }, 'main', sessions, bridge, () => sessions.resetOrchestrator(), chat)
     await panel.start()
 
     const connecting = await fetch(`${panel.url}api/wechat/connect`, { method: 'POST' })
@@ -132,18 +141,20 @@ it('binds through WebUI and exchanges text, images and files with the persistent
       expect(status.state).toBe('connected')
     }, { timeout: 5000 })
     await vi.waitFor(() => { expect(provider.requests).toHaveLength(2) }, { timeout: 5000 })
+    for (const [index, trigger] of triggers.entries()) await chat.send({ id: `reply-${index}`, channel: trigger.channel!, text: 'orchestrator 微信回复', kind: 'reply' })
     await vi.waitFor(() => {
       expect(wechatServer.sent.filter(message => JSON.stringify(message).includes('orchestrator 微信回复'))).toHaveLength(2)
       expect(store.get(KV.wechat.cursor)).toBe('cursor-1')
     }, { timeout: 5000 })
-    const transcript = JSON.stringify(sessions.get('main')?.messages)
+    expect(JSON.stringify(wechatServer.sent)).toContain('"client_id":"omp-superagent:reply-0"')
+    const transcript = JSON.stringify(sessions.get('main')?.sessionManager.getBranch())
     expect(transcript).toContain('wechat:9007199254740993')
     expect(transcript).toContain('wechat:media-1')
     expect(transcript).toContain('wechat file payload')
     expect(transcript).toContain('.._notes.txt')
     expect(transcript).not.toContain('不得投递')
     expect(JSON.stringify(provider.requests)).toContain('image_url')
-    expect(sessions.get('main')?.messages.filter(message => message.role === 'custom' && JSON.stringify(message.details).includes('"requestId":"wechat:9007199254740993"'))).toHaveLength(1)
+    expect(sessions.get('main')?.sessionManager.getBranch().filter(entry => entry.type === 'custom_message' && JSON.stringify(entry.details).includes('"requestId":"chat:wechat:9007199254740993"'))).toHaveLength(1)
     const panelMessages = await (await fetch(`${panel.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
     expect(panelMessages.messages.find(message => message.text === '微信文本')?.role).toBe('user')
 
@@ -159,7 +170,7 @@ it('binds through WebUI and exchanges text, images and files with the persistent
 
     await bridge.stop()
     const polls = wechatServer.updateCursors.length
-    bridge = new WeChatBridge({ store, sessions, masterId: 'main' }, protocol)
+    bridge = new WeChatBridge({ store, chat }, protocol)
     await bridge.start()
     await vi.waitFor(() => { expect(wechatServer.updateCursors.length).toBeGreaterThan(polls) })
     expect(wechatServer.updateCursors.at(-1)).toBe('cursor-1')
@@ -171,12 +182,13 @@ it('binds through WebUI and exchanges text, images and files with the persistent
     expect(reset.status).toBe(200)
     expect(sessions.get('main')).not.toBe(previousSession)
     expect((await (await fetch(`${panel.url}api/messages`)).json() as { messages: unknown[] }).messages).toEqual([])
-    const repliesBeforeReset = wechatServer.sent.length
+    const requestsBeforeReset = provider.requests.length
     await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: '重置后的消息' }) })
-    await vi.waitFor(() => {
-      expect(wechatServer.sent.length).toBeGreaterThan(repliesBeforeReset)
-      expect(wechatServer.sent.some(message => JSON.stringify(message).includes('orchestrator 微信回复'))).toBe(true)
-    }, { timeout: 5000 })
+    await vi.waitFor(() => { expect(provider.requests.length).toBeGreaterThan(requestsBeforeReset) }, { timeout: 5000 })
+    const latest = triggers.at(-1)!
+    await chat.send({ id: 'reset-reply', channel: latest.channel!, text: '重置后的回复', kind: 'reply' })
+    const afterReset = await (await fetch(`${panel.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
+    expect(afterReset.messages.some(message => message.role === 'assistant' && message.text === '重置后的回复')).toBe(true)
   } finally {
     await panel?.stop()
     await bridge?.stop()

@@ -5,8 +5,8 @@ import { reasonText, threadKey, type Assessor, type AssessmentOutcome, type Cand
 import { AdmissionDirectionSchema, RuleAssessmentSchema, assessmentOutcome, directionAllowed, type Settings } from '../policy.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { Commands } from '../infra/commands.ts'
-import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
+import type { Machine } from '../deployment.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
@@ -47,7 +47,7 @@ export interface AssessorHost {
   /** Active evaluations in `Engine` that the assessor reads and decides. */
   readonly engine: Pick<EngineForMainSession, 'candidate' | 'candidateDelivered' | 'decide'>
   readonly commands: Commands
-  readonly deployment: Deployment
+  readonly machine: Pick<Machine, 'admissionContextMaxPages' | 'admissionContextTimeoutMs'>
   /** Durable effect queue through which candidate assessments are delivered. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   settings(): Settings
@@ -134,10 +134,10 @@ export class MasterAssessor implements Assessor {
       // Defer start until `reads.loading` is assigned below so `current()` holds from the first step.
       loading = Promise.resolve().then(async () => {
         try {
-          const timeout = AbortSignal.timeout(this.host.deployment.admissionContextTimeoutMs)
+          const timeout = AbortSignal.timeout(this.host.machine.admissionContextTimeoutMs)
           const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : []), timeout])
           const commands = this.host.commands.withSignal(signal)
-          const context = await admissionContext(thread, commands, this.host.deployment.admissionContextMaxPages)
+          const context = await admissionContext(thread, commands, this.host.machine.admissionContextMaxPages)
           if (!current()) return
           reads.context = context
           // Allow pagination to continue from the end of the initial window.

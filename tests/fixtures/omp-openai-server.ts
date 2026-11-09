@@ -19,6 +19,7 @@ export interface OmpFixture {
 const textOf = (content: unknown): string => typeof content === 'string' ? content : Array.isArray(content)
   ? content.map(part => part && typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : '').join('') : ''
 const requestText = (request: FixtureRequest): string => request.messages.map(message => textOf(message.content)).join('\n')
+const incomingText = (request: FixtureRequest): string => request.messages.slice(request.messages.findLastIndex(message => message.role === 'tool') + 1).map(message => textOf(message.content)).join('\n')
 const jsonText = (text: string): Record<string, unknown> | undefined => {
   for (const match of text.matchAll(/\{[\s\S]*\}/g)) {
     try { const value: unknown = JSON.parse(match[0]); if (value && typeof value === 'object') return value as Record<string, unknown> } catch { /* Try the next JSON object. */ }
@@ -35,12 +36,12 @@ function coreReply(request: FixtureRequest): FixtureReply {
     }
     return { toolCalls: [{ name: 'write', arguments: { path: 'fixture-result.txt', content: 'fixed\n' } }] }
   }
-  if (text.includes('worker_report')) {
-    const ticketId = /"worker_report"\s*,\s*"ticket"\s*:\s*\{\s*"ticket_id"\s*:\s*"([^"]+)"/.exec(text)?.[1] ?? ''
+  if (request.messages.at(-1)?.role === 'tool') return { content: 'Done.' }
+  if (incomingText(request).includes('worker_report')) {
+    const ticketId = /"worker_report"\s*,\s*"ticket"\s*:\s*\{\s*"ticket_id"\s*:\s*"([^"]+)"/.exec(incomingText(request))?.[1] ?? ''
     return { toolCalls: [{ name: 'orchestrator_reply', arguments: { ticket_id: ticketId, purpose: 'result', text: 'Fixture work completed.' } }] }
   }
-  if (request.messages.some(message => message.role === 'tool')) return { content: 'Done.' }
-  const candidate = jsonText(text)
+  const candidate = jsonText(incomingText(request))
   const triggerId = typeof candidate?.trigger_id === 'string' ? candidate.trigger_id : ''
   return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'accept', trigger_id: triggerId,
     title: 'Fix fixture typo', worktree_name: 'fix-fixture-typo', acknowledgement: 'I will fix the fixture typo.' }] } }] }

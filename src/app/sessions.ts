@@ -1,7 +1,6 @@
 /** Persistent OMP orchestrator and worker Sessions, with isolated tools and durable delivery. */
 import { AgentRegistry, ModelRegistry, SessionManager, Settings, createAgentSession, discoverAuthStorage, loadSkillsFromDir,
   type AgentSession, type AuthStorage, type CreateAgentSessionOptions, type CustomTool, type Skill } from '@oh-my-pi/pi-coding-agent'
-import { randomUUID } from 'node:crypto'
 import type { ImageContent, TextContent } from '@oh-my-pi/pi-ai'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
@@ -218,12 +217,12 @@ export class OMPSessions {
     this.bind(session, ticketId)
     await this.delivery.send(session, requestId, text, mode, this.host.lifetime, inputIds, authorize, accepted)
   }
-  /** Queue one local operator message; use vision, inline text, or durable files according to each payload. */
-  async chat(sessionId: string, text: string, attachments: ChatAttachment[] = [],
-    options: { requestId?: string; source?: string } = {}): Promise<string> {
+  /** Persist a visible chat message without starting a turn; ChatSource turns its rendered text into a Trigger. */
+  async presentChat(sessionId: string, text: string, attachments: ChatAttachment[],
+    options: { requestId: string; source: 'web-panel' | 'wechat' }): Promise<{ requestId: string; text: string }> {
     const session = this.loaded.get(sessionId)
     if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
-    const requestId = options.requestId ?? `web:${randomUUID()}`
+    const { requestId } = options
     const images: ImageContent[] = []
     const rendered: string[] = []
     const metadata: AttachmentMetadata[] = []
@@ -252,24 +251,16 @@ export class OMPSessions {
     }
     const body = [text, ...rendered].filter(Boolean).join('\n\n') || '请查看附件。'
     const content: ChatContent = [{ type: 'text', text: body }, ...images]
-    this.bind(session)
-    await this.delivery.send(session, requestId, content, 'queue', this.host.lifetime, undefined, undefined, undefined,
-      { display: true, attribution: 'user', source: options.source ?? 'web-panel', attachments: metadata })
-    return requestId
+    await this.delivery.append(session, requestId, content,
+      { display: true, attribution: 'user', source: options.source, attachments: metadata })
+    return { requestId, text: body }
   }
-  /** Notify a channel once per yielded agent run with its final non-error assistant text. */
-  onReply(sessionId: string, listener: (text: string) => void): () => void {
+
+  /** Publish a durable Outbox reply to the Web transcript without triggering another model turn. */
+  async publish(sessionId: string, requestId: string, text: string): Promise<void> {
     const session = this.loaded.get(sessionId)
     if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
-    return session.subscribe(event => {
-      if (event.type !== 'agent_end' || event.yielded === false) return
-      for (let index = event.messages.length - 1; index >= 0; index--) {
-        const message = event.messages[index]
-        if (message?.role !== 'assistant' || message.stopReason === 'error' || message.stopReason === 'aborted') continue
-        const text = message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n').trim()
-        if (text) { listener(text); return }
-      }
-    })
+    await this.delivery.append(session, requestId, text, { display: true, attribution: 'agent', source: 'chat-reply' })
   }
 
 

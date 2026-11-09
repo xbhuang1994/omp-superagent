@@ -34,6 +34,7 @@ export interface WeChatMessageItem {
 }
 export interface WeChatMessage {
   message_id?: string
+  create_time_ms?: number
   client_id?: string
   from_user_id?: string
   context_token?: string
@@ -151,16 +152,16 @@ export class WeChatProtocol {
     }
   }
 
-  private async sendItem(account: WeChatAccount, item: Record<string, unknown>): Promise<void> {
+  private async sendItem(account: WeChatAccount, item: Record<string, unknown>, clientId = `omp-superagent:${randomUUID()}`): Promise<void> {
     const response = await this.json<{ ret?: number; errmsg?: string }>(account.baseUrl, 'ilink/bot/sendmessage', {
       token: account.token,
-      body: { msg: { from_user_id: '', to_user_id: account.userId, client_id: `omp-superagent:${randomUUID()}`, message_type: 2,
+      body: { msg: { from_user_id: '', to_user_id: account.userId, client_id: clientId, message_type: 2,
         message_state: 2, context_token: account.contextToken, item_list: [item] } },
     })
     if (response.ret) throw new Error(`微信发送失败：${response.errmsg ?? `ret=${response.ret}`}`)
   }
-  async sendText(account: WeChatAccount, text: string): Promise<void> {
-    if (text) await this.sendItem(account, { type: 1, text_item: { text } })
+  async sendText(account: WeChatAccount, text: string, messageId?: string): Promise<void> {
+    if (text) await this.sendItem(account, { type: 1, text_item: { text } }, messageId ? `omp-superagent:${messageId}` : undefined)
   }
   async sendMedia(account: WeChatAccount, plaintext: Buffer, name: string, mediaType: string, caption = ''): Promise<void> {
     if (plaintext.length > MAX_MEDIA_BYTES) throw new Error('微信媒体不能超过 100 MiB')

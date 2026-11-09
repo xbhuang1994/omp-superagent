@@ -2,9 +2,9 @@
 
 ## Closed loop
 
-The standalone service keeps the domain chain: GitHub Trigger → Eval → Decision/Mandate → Ticket → Assignment. `Runtime` locks the state directory, opens schema-1 SQLite, validates GitHub, writes worker shims, registers GitHub, applies startup settings, restores the orchestrator, resumes Tickets, then starts passes and durable Effects. The watcher waits for `ready`.
+The standalone service keeps the domain chain: GitHub or chat Trigger → Eval → Decision/Mandate → Ticket → Assignment. `Runtime` locks the state directory, opens schema-1 SQLite, validates optional GitHub, writes worker shims, registers GitHub and chat Sources, applies startup settings, restores the orchestrator, resumes Tickets, then starts passes and durable Effects. The watcher waits for `ready`.
 
-One persistent OMP orchestrator routes and assesses. Each Ticket has one persistent OMP worker in its own directory. Application tools call `Engine`; workers report through durable relay Effects; `Outbox` posts through GitHub. No Cordis service, browser client, Feishu adapter, worker subagent manager or async background-job host exists.
+One persistent OMP orchestrator routes and assesses. Each Ticket has one persistent OMP worker in its own directory. Application tools call `Engine`; workers report through durable relay Effects; `Outbox` posts through GitHub or the originating chat conversation. No Cordis service, Feishu adapter, worker subagent manager or async background-job host exists.
 
 ```mermaid
 flowchart LR
@@ -18,8 +18,9 @@ flowchart LR
   main -->|reply| outbox[Outbox]
   outbox --> gh
   main & workers --> jsonl[(OMP JSONL)]
-  wx[WeChat iLink] <--> bridge[WeChatBridge]
-  bridge -->|chat / final reply| main
+  web[Web / WeChat] --> chat[Chat Source]
+  chat -->|Trigger| engine
+  outbox -->|originating conversation| chat
 ```
 
 ## Persistence and delivery
@@ -52,13 +53,14 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 | `src/core/intake.ts`, `src/core/evals.ts`, `src/core/tickets.ts`, `src/core/assignments.ts`, `src/core/replies.ts` | Core behavior |
 | `src/sources/github.ts`, `src/sources/github-trigger.ts`, `src/sources/github-channel.ts`, `src/sources/github-read.ts`, `src/sources/github-pull.ts` | GitHub Source |
 | `src/sources/host.ts`, `src/sources/kind.ts`, `src/sources/registry.ts`, `src/sources/poll.ts`, `src/sources/admission-context.ts` | Source infrastructure |
+| `src/sources/chat.ts` | Web/WeChat chat Source |
 | `src/infra/commands.ts`, `src/infra/environment.ts`, `src/infra/paths.ts`, `src/infra/health.ts`, `src/infra/text.ts` | Process infrastructure |
 
 ## Tests
 
 | Files | Coverage |
 | --- | --- |
-| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts` | Real OMP Sessions/delivery, executor slots, Web API and WeChat iLink/CDN flow |
+| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts`, `tests/chat-source.spec.ts` | Real OMP Sessions/delivery, executor slots, Web API, WeChat iLink/CDN and chat Ticket flow |
 | `tests/fixtures/omp-openai-server.ts`, `tests/fixtures/deployment.ts`, `tests/fixtures/git.ts`, `tests/fixtures/async.ts`, `tests/fixtures/web-panel-fixture.ts` | CLI/provider/browser fixtures |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/commands.spec.ts` | Deployment/environment/commands |
 | `tests/policy.spec.ts`, `tests/core-engine.spec.ts`, `tests/assessment.spec.ts` | Policy/engine/assessment |
