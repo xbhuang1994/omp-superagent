@@ -22,10 +22,71 @@ let wechatState
 const rendered = new Set()
 let selected = []
 let pendingMessageId
+let followOutput = true
+
+transcript.addEventListener('scroll', () => {
+  followOutput = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80
+})
+
+function codeView(text, language, json = false) {
+  const pre = document.createElement('pre')
+  pre.className = 'code-view'
+  pre.dataset.language = language
+  const code = document.createElement('code')
+  if (json) {
+    const tokens = /("(?:\\.|[^"\\])*")(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g
+    let cursor = 0
+    for (const match of text.matchAll(tokens)) {
+      code.append(document.createTextNode(text.slice(cursor, match.index)))
+      const span = document.createElement('span')
+      span.className = match[2] ? 'json-key' : match[1] ? 'json-string' : match[0] === 'true' || match[0] === 'false' ? 'json-boolean' : match[0] === 'null' ? 'json-null' : 'json-number'
+      span.textContent = match[0]
+      code.append(span)
+      cursor = match.index + match[0].length
+    }
+    code.append(document.createTextNode(text.slice(cursor)))
+  } else code.textContent = text
+  pre.append(code)
+  return pre
+}
+
+function appendFormatted(container, text) {
+  const trimmed = text.trim()
+  if (/^[\[{]/.test(trimmed)) {
+    try {
+      container.append(codeView(JSON.stringify(JSON.parse(trimmed), null, 2), 'JSON', true))
+      return
+    } catch { /* Not complete JSON; render as text or code below. */ }
+  }
+  const fences = /```([\w+-]*)[^\S\n]*\n?([\s\S]*?)```/g
+  const plain = value => {
+    if (!value) return
+    const pre = document.createElement('pre')
+    pre.className = 'message-text'
+    pre.textContent = value
+    container.append(pre)
+  }
+  let cursor = 0
+  let found = false
+  for (const match of text.matchAll(fences)) {
+    found = true
+    plain(text.slice(cursor, match.index))
+    container.append(codeView(match[2].replace(/\n$/, ''), match[1] || 'code'))
+    cursor = match.index + match[0].length
+  }
+  if (found) { plain(text.slice(cursor)); return }
+  if (/\n/.test(text) && /(?:^|\n)\s*(?:[\w.-]+\s*=|[\w.-]+\s*:\s|\[[\w.-]+\])/.test(text)) {
+    container.append(codeView(text, 'config'))
+    return
+  }
+  plain(text)
+}
 
 function render(messages) {
+  let added = false
   for (const message of messages) {
     if (rendered.has(message.id)) continue
+    added = true
     rendered.add(message.id)
     const article = document.createElement('article')
     article.className = `message ${message.role}`
@@ -40,9 +101,26 @@ function render(messages) {
       time.textContent = new Date(message.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
       meta.append(time)
     }
-    const text = document.createElement('pre')
-    text.textContent = message.text
-    article.append(meta, text)
+    const body = document.createElement('div')
+    body.className = 'message-body'
+    body.id = `message-body-${message.id}`
+    appendFormatted(body, message.text)
+    article.append(meta, body)
+    if (message.text.length > 700 || (body.textContent ?? '').split('\n').length > 12) {
+      body.classList.add('collapsed')
+      const toggle = document.createElement('button')
+      toggle.type = 'button'
+      toggle.className = 'message-toggle'
+      toggle.textContent = '展开全部'
+      toggle.setAttribute('aria-controls', body.id)
+      toggle.setAttribute('aria-expanded', 'false')
+      toggle.addEventListener('click', () => {
+        const collapsed = body.classList.toggle('collapsed')
+        toggle.textContent = collapsed ? '展开全部' : '收起'
+        toggle.setAttribute('aria-expanded', String(!collapsed))
+      })
+      article.append(toggle)
+    }
     for (const image of message.images ?? []) {
       const figure = document.createElement('figure')
       figure.className = 'attachment-image'
@@ -64,7 +142,7 @@ function render(messages) {
     transcript.append(article)
   }
   empty.hidden = rendered.size > 0
-  transcript.scrollTop = transcript.scrollHeight
+  if (added && followOutput) transcript.scrollTop = transcript.scrollHeight
 }
 
 async function refresh() {
@@ -211,6 +289,7 @@ form.addEventListener('submit', async event => {
       body: JSON.stringify({ messageId, text, attachments }),
     })
     const data = await response.json()
+    followOutput = true
     if (!response.ok) throw new Error(data.error || `发送失败 (${response.status})`)
     pendingMessageId = undefined
     textarea.value = ''

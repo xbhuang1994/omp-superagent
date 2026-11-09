@@ -153,6 +153,34 @@ h1 { margin: 0 0 4px; font-size: 17px; line-height: 1.2; letter-spacing: -.01em;
 .message strong { color: #aebdff; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
 .message time { color: var(--muted); font-size: 10px; }
 .message pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.72; }
+.message-body { position: relative; min-width: 0; }
+.message-body.collapsed { max-height: 240px; overflow: hidden; }
+.message-body.collapsed::after { content: ""; position: absolute; inset: auto 0 0; height: 54px; background: linear-gradient(transparent, #151e2d); pointer-events: none; }
+.message.user .message-body.collapsed::after { background: linear-gradient(transparent, #5b6fda); }
+.message.event .message-body.collapsed::after { background: linear-gradient(transparent, #111b29); }
+.message .message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 14px; line-height: 1.72; }
+.message .code-view {
+  margin: 3px 0 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid #2c3a50;
+  border-radius: 10px;
+  background: #080f1a;
+  color: #d4deed;
+  white-space: pre;
+  overflow-wrap: normal;
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  tab-size: 2;
+}
+.code-view::before { content: attr(data-language); display: block; margin-bottom: 7px; color: #7286a5; font: 10px/1.2 ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.json-key { color: #9db7ff; }
+.json-string { color: #9ed7b6; }
+.json-number { color: #e5bc83; }
+.json-boolean { color: #d3a0ee; }
+.json-null { color: #8290a3; }
+.message-toggle { margin: 7px 0 0; padding: 3px 0; border-radius: 4px; background: transparent; color: #a9b8ed; font-size: 11px; font-weight: 600; box-shadow: none; }
+.message-toggle:hover:not(:disabled) { background: transparent; color: #d4dcff; }
+.message.user .message-toggle { color: #f0f2ff; }
 .message.user {
   align-self: flex-end;
   border-color: #667bf0;
