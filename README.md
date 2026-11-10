@@ -1,134 +1,123 @@
 # omp-superagent
 
-`omp-superagent` is a standalone coding agent for one GitHub repository. It receives GitHub events, evaluates them under a Policy, and runs each authorized Ticket in a persistent [Oh My Pi](https://github.com/can1357/oh-my-pi) worker Session and its own directory. The orchestrator then replies in the original Issue or pull-request conversation.
+**一个能替你干活的"值班程序员"。** 你在 GitHub Issue / PR、本地网页或微信里 @ 它提需求，它先判断"该不该做、谁让做的"，通过后给每个任务开一个独立的 AI 工人，在单独的目录里写代码、跑命令，做完把结果回复到你提问的那个对话里。
 
-## Runtime contract
+基于 [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi)，一个服务只对应一个 GitHub 仓库。
 
-- One persistent OMP orchestrator Session routes and evaluates.
-- One persistent OMP worker Session per Ticket executes and reports.
-- SQLite stores domain state, durable effects and outbox order. OMP JSONL stores transcripts and idempotent message IDs.
-- GitHub is optional; a Web conversation panel and Tencent iLink WeChat binding are included. Feishu, DSH hosting, online settings/Prompt editing, worker subagents and async background jobs are not included.
+> 设计原则：**占用人的注意力尽量少，给出的价值尽量多。** 只在被明确请求（或有你写好的规则）时行动；只在需要你决策或有结果时说话；失败如实说失败。
 
-## Usage
+## 它能做什么
 
-### 1. Prerequisites
+- **GitHub**：在 Issue/PR 里 `@agent 修一下 README 的错别字` → 确认收到 → 干活 → 回帖交付结果。
+- **网页面板**（默认 `http://127.0.0.1:3082/`）：聊天、上传附件（≤3 个/条，≤5 MiB/个）、查看每个 Worker 进度、在线切换模型、重置会话。
+- **微信**：面板「设置 → 微信」扫码绑定，直接在微信里发需求、收文件/图片。
+- **不做**：飞书、DSH 托管、在线改 Prompt、Worker 子代理、异步后台任务。
 
-- Bun `>=1.4.4` and git `>=2.32`.
-- A dedicated GitHub account with push access to the target repository. Configure a `gh` wrapper for that account; do not use an operator's personal account.
-- An OMP provider in an isolated `agentDir`. Explicit models must exist in its `models.yml`; `null` selects the OMP default only for a new Session and preserves the restored selection after restart.
-- A new empty absolute `stateDir`. Existing DSH state, transcripts and non-schema-1 SQLite files are rejected, not migrated.
+## 快速开始
 
-### 2. Create startup JSON
+**前置**：Bun `>=1.4.4`、git `>=2.32`；已配置好模型提供商的 OMP `agentDir`；一个全新的空 `stateDir`（旧状态不会被迁移，直接拒绝）。若用 GitHub：需要一个专用账号（有仓库 push 权限）和对应的 `gh` 封装，别用个人账号。
 
-Example `config.json`:
+**1. 写配置** `config.json`（路径均用绝对路径）。只用网页聊天时可去掉 `github`：
 
 ```json
 {
   "stateDir": "/srv/omp-superagent/state",
   "agentDir": "/srv/omp-superagent/omp",
   "sources": {
-    "chat": { "enabled": true, "config": {} },
-    "github": {
-      "enabled": true,
-      "config": {
-        "repository": "owner/repo",
-        "cli": "/usr/local/bin/gh-agent",
-        "pollSeconds": 60
-      }
-    }
+    "chat":   { "enabled": true, "config": {} },
+    "github": { "enabled": true,
+                "config": { "repository": "owner/repo", "cli": "/usr/local/bin/gh-agent", "pollSeconds": 60 } }
   },
-  "policy": {
-    "sources": {
-      "chat": { "allowed": [{ "id": "web:local" }] },
-      "github": {
-        "allowed": [{ "id": "your-github-login" }]
-      }
-    }
-  },
-  "eval": {
-    "mode": "observe",
-    "model": null
-  },
-  "executor": {
-    "model": null,
-    "maxWorkers": 3,
-    "prepare": "git clone --quiet /srv/repositories/repo \"$OMP_SUPERAGENT_DIR\""
-  }
+  "policy": { "sources": {
+    "chat":   { "allowed": [{ "id": "web:local" }] },
+    "github": { "allowed": [{ "id": "your-github-login" }] }
+  } },
+  "eval":     { "mode": "observe", "model": null },
+  "executor": { "model": null, "maxWorkers": 3,
+                "prepare": "git clone --quiet /srv/repositories/repo \"$OMP_SUPERAGENT_DIR\"" }
 }
 ```
 
-`agentDir` defaults to `<stateDir>/omp`. Startup JSON controls initial settings; the settings window manages model selections online. An unchanged startup model preserves the online choice after restart, while an explicit config edit takes precedence. `eval.mode` is `off`, `observe`, or `auto`: `observe` evaluates proactive candidates without accepting them, while `auto` accepts bounded matches. Explicit requests always require a whitelisted sender.
+| 字段 | 含义 |
+| --- | --- |
+| `policy.…allowed` | 白名单：只有名单里的人能"明确下达"任务 |
+| `eval.mode` | `off` 不主动评估；`observe` 只记录"我本来会做什么"（推荐起步）；`auto` 自动接受规则内的主动任务 |
+| `executor.maxWorkers` | 同时工作的 Worker 上限 |
+| `executor.prepare` | 为每个任务准备目录的 shell 命令，环境变量 `$OMP_SUPERAGENT_DIR` 即任务目录 |
+| `*.model` | `null` 用 OMP 默认；或 `{provider, model, thinkingLevel}`；写了不存在的模型会启动失败，不会悄悄回退 |
+| `web` | `{enabled, host, port}`，`port: 0` 为随机端口 |
 
-Role models accept `null` or `{ "provider": "...", "model": "...", "thinkingLevel": "low" }`. Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Unknown explicit models fail startup; no fallback model is selected silently.
-
-Open **设置 → 模型** to list usable OMP models and configure orchestrator/worker models and thinking levels. `GET /api/settings/models` reads the catalog and current selections; `PUT` validates and applies both role selectors immediately, then persists them. The catalog uses `ModelRegistry.getAvailable()`, not every bundled model.
-
-Changing a config-file model to a value different from its recorded startup baseline takes precedence. Reverting to that baseline alone does not clear an online selection.
-
-The Web panel defaults to `http://127.0.0.1:3082/` and needs no GitHub configuration. Omit `sources.github` for chat-only use. Configure it with `"web": { "enabled": true, "host": "127.0.0.1", "port": 3082 }`; set `enabled` to `false` to disable it or `port` to `0` for an ephemeral port. The CLI prints the actual URL. The server accepts loopback requests only and uses no remote assets or CORS. Upload any file type, up to 3 attachments per message and 5 MiB each. PNG/JPEG/WebP/GIF use native OMP image content; UTF-8 text up to 256 KiB is inlined; other and larger files are stored under `<stateDir>/attachments/<requestId>/` with their paths included in the message so OMP can inspect or transform them with `read`/`bash`.
-
-Web and WeChat messages use the `chat` Source. Each source message receives a host-derived `trigger_id` and follows the standard candidate → route → Ticket pipeline; no client or model creates IDs. Allowed senders' direct messages are explicit candidates, including chatter the orchestrator may ignore. A chat message never fans out to every worker of the conversation: the orchestrator attaches a follow-up to the one Ticket whose title, original request and worker-reported topic it continues, accepts any other request that needs work (including web lookups such as news or weather) as a new Ticket, and answers only plain conversation itself. Confirmations, attention questions, and results use durable Outbox receipts to the originating conversation. Configure `sources.chat.enabled` and `policy.sources.chat.allowed` separately. Web uses `web:local`; after WeChat binding, the dialog shows its `wechat:<user-id>` sender ID for the allowlist. Repeating the same source `messageId` is idempotent across retries and restarts.
-
-The panel's **设置 → 微信** page creates a local QR code through Tencent's iLink Bot API. Scan and confirm with WeChat `>=8.0.70`; enter the phone verification code if requested. The bound WeChat user chats with the same persistent orchestrator Session, with durable ticket replies and image/file/video attachments transferred through the encrypted WeChat CDN. The orchestrator can send a local file explicitly with `wechat_send_file`. Bindings and the long-poll cursor persist in `orchestrator.sqlite` and resume after restart; disconnecting removes only the binding and cursor, never the OMP transcript. Media is limited to 100 MiB per item.
-
-Use **重置 Session** to start an empty orchestrator conversation without removing tickets or the WeChat binding. The action requires confirmation; after reset, the next message starts a new OMP transcript.
-
-Open **Worker** to inspect every background worker in a child window. The list combines Ticket/Assignment state with the real OMP Session's streaming state. Selecting a worker shows its directory, pending inputs, delivery errors, latest report, and recent persisted messages; completed workers remain readable from JSONL without restarting them.
-
-### 3. Build and start
+**2. 构建并启动**
 
 ```sh
-git clone <this-repository> omp-superagent
-cd omp-superagent
 bun install
 bun run build
-./lib/cli.js --config /absolute/path/config.json
+./lib/cli.js --config /absolute/path/config.json   # 或 bun start -- --config ...
 ```
 
-The CLI validates JSON, models, GitHub identity and repository push access before starting watchers. `SIGINT` and `SIGTERM` stop watchers, Sessions and Effects, restore the environment, close SQLite and release the state lock. `bun start -- --config /absolute/path/config.json` is equivalent after build.
+启动时会校验配置、模型、GitHub 身份与仓库权限，通过后打印 `omp-superagent ready` 和面板地址。`Ctrl-C`/`SIGTERM` 会有序关闭；改配置需重启。
 
-### 4. Use the agent
+**3. 使用**：在白名单账号下 `@<agent-login> 你的需求`，或直接在网页/微信里发消息。**不要删除 `stateDir` 里的 SQLite 和 JSONL**，它们保证重启后不重复回复。
 
-From a whitelisted GitHub account, mention the agent in an Issue or PR:
+**4. 验证**：`bun run check`（类型检查 + 测试 + 构建）；`bun scripts/omp-smoke.ts lib/cli.js`（离线端到端冒烟，假 provider + 假 `gh`）。
+
+## 架构
+
+一句话：**一个常驻"调度员"负责判断和回复，每个任务一个常驻"工人"负责干活，所有状态落盘。**
+
+```mermaid
+flowchart LR
+  gh[GitHub 轮询] --> src[Source 来源]
+  web[网页 / 微信] --> src
+  src -->|Trigger| engine[Engine 领域引擎]
+  main[调度员 Session] <-->|应用工具| engine
+  engine <--> db[(SQLite)]
+  engine --> exec[OMPExecutor]
+  exec --> workers[Worker Sessions<br/>每 Ticket 一个 + 独立目录]
+  workers -->|持久化 relay 汇报| main
+  main -->|回复| outbox[Outbox]
+  outbox --> gh
+  outbox --> web
+  main & workers --> jsonl[(OMP JSONL 对话记录)]
+```
+
+**一条请求的旅程**：`Trigger`（收到的消息）→ `Eval`（调度员评估：是否明确请求、发送者是否在白名单）→ `Decision/Mandate`（接受并授权）→ `Ticket`（任务单）→ `Assignment`（派给 Worker）→ Worker 汇报 → `Outbox` 回到原对话。
+
+**关键设计**
+
+- **两类会话**：调度员只拿"应用工具"，不碰代码；Worker 只额外获得 `read` / `bash` / `edit` / `write`，且在任务结束后工具会被拦截。
+- **两份存储**：SQLite（`orchestrator.sqlite`）存领域状态、持久化 Effect 和 Outbox 顺序；JSONL 存对话记录与幂等消息 ID。重启后未完成的任务会续跑，已投递的消息不会重复。
+- **聊天路由**：一条聊天消息不会群发给所有 Worker，调度员只把它接到最匹配的那个 Ticket；需要新活就开新 Ticket；闲聊自己回。
+- **并发**：`WorkerSlots` 限制同时运行数，唤醒优先于新启动，真人追问可临时多占一个名额。
+- **启动/关闭**：`Runtime` 加锁状态目录 → 打开 SQLite → 校验 GitHub → 注册 Source → 恢复调度员与 Ticket → 启动轮询与 Effect；关闭时反向有序释放。
+
+**状态目录**
 
 ```text
-@<agent-login> Fix the README typo
+<stateDir>/
+├── orchestrator.sqlite   领域状态 / Effect / Outbox / 微信绑定
+├── sessions/             调度员与 Worker 的 JSONL
+├── omp/                  OMP 认证、模型、缓存（默认 agentDir）
+├── work/                 每个 Ticket 的工作目录
+├── attachments/          网页上传的大文件
+└── worker-bin, worker-gitconfig   命令封装与隔离的 git 配置
 ```
 
-The service creates one Ticket and worker, acknowledges the request, executes in the Ticket directory and posts the result in the original conversation. Each Ticket has its own persistent worker Session and isolated working directory. Do not delete SQLite or JSONL between runs: they prevent duplicate messages after restart.
+**源码地图**
 
-State layout:
+| 目录 | 职责 |
+| --- | --- |
+| `src/cli.ts`, `src/deployment.ts`, `src/policy.ts` | 入口、配置 schema、授权策略 |
+| `src/core/` | 领域引擎：Ticket、Eval、Assignment、回复 |
+| `src/app/` | Runtime、Session、投递、Effect、Web 面板、微信、Worker 视图、模型设置、工具 |
+| `src/sources/` | GitHub 与 chat 来源 |
+| `src/executor/omp.ts` | 启动 / 唤醒 / 回收 Worker |
+| `prompts/`, `skills/`, `web/` | 提示词、技能、前端面板 |
 
-- `orchestrator.sqlite`: domain state, durable Effects and Outbox.
-- `sessions/`: orchestrator and worker JSONL transcripts.
-- `omp/`: OMP authentication, models and cache.
-- `work/`: default Ticket directories.
-- `worker-bin`, `worker-gitconfig`: command shims and isolated git configuration.
+## 文档
 
-### 5. Verify and troubleshoot
+[000 理念](docs/000-philosophy.md) · [001 领域模型](docs/001-domain.md) · [002 授权](docs/002-authorization.md) · [003 执行](docs/003-execution.md) · [004 Prompt](docs/004-prompts.md) · [005 会话](docs/005-sessions.md) · [006 部署](docs/006-deployment.md) · [007 架构](docs/007-architecture.md) · [SETUP](SETUP.md)
 
-```sh
-bun run check
-bun scripts/omp-smoke.ts lib/cli.js
-./lib/cli.js --config /does/not/exist.json
-```
-
-The offline smoke drives a real CLI through a loopback provider and fake `gh`, asserting Ticket completion, the worker output file, both JSONL transcripts, one acknowledgement/result and no restart duplicates. The last command must fail nonzero and name the missing path. See [docs/006-deployment.md](docs/006-deployment.md) for the full schema and [SETUP.md](SETUP.md) for a short checklist.
-
-## Development
-
-`bun run check` runs TypeScript, all Vitest suites and the build. `bun scripts/omp-smoke.ts lib/cli.js` runs the real CLI against a loopback OpenAI-compatible provider, fake `gh` and a temporary git repository, then verifies completion and restart idempotency.
-
-## Documentation
-
-- [000 Philosophy](docs/000-philosophy.md)
-- [001 Domain model](docs/001-domain.md)
-- [002 Authorization](docs/002-authorization.md)
-- [003 Execution](docs/003-execution.md)
-- [004 Prompts](docs/004-prompts.md)
-- [006 Deployment](docs/006-deployment.md)
-- [007 Architecture](docs/007-architecture.md)
-
-## License
+## 许可
 
 [MIT](LICENSE)
