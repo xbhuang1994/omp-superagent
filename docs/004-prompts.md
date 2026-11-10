@@ -14,7 +14,7 @@ Orchestrator tools cover reading, routing, retries/status/notes, trigger requeue
 
 For chat, `dispatch` tells the orchestrator to route by each card's `title`, `asked` and `digest`; to attach more work on what a Ticket built, and questions about it, to that Ticket without reading it first; to treat any request that needs work, repository-related or not, as work for a worker rather than answering or doing it itself; and to correct evident speech-transcript errors in titles and acknowledgements while workers read the original text.
 
-The orchestrator has no shell. Workers get only `read`, `bash`, `edit`, `write` plus application tools. `task`, `wait`, web, todo, MCP, subagents and discovery tools are excluded. Async execution and automatic bash backgrounding are disabled, so prompts make no background-job or subagent promises.
+The orchestrator gets `read`, `bash` and its application tools, with background execution disabled. Workers get `read`, `bash`, `edit`, `write`, `task`, `wait` plus application tools; web, todo, MCP and discovery tools are excluded. The worker prompt says how long commands move to background jobs, which jobs outlive a handoff, and how to delegate to `ticket-task` subagents (see 003 Execution).
 
 ## Environment
 

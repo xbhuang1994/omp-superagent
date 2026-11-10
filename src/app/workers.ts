@@ -1,4 +1,6 @@
 /** Actual worker state and bounded progress projections for the Web panel. */
+import { MAIN_AGENT_ID } from '@oh-my-pi/pi-coding-agent'
+import type { AsyncJobType } from '@oh-my-pi/pi-coding-agent/async'
 import { latestAssignment, ticketStage, type Assignment, type Ticket, type TicketInput, type TicketOutcome, type TicketStage } from '../core/index.ts'
 import { workerSessionId } from '../executor/omp.ts'
 import type { OMPSessions } from './sessions.ts'
@@ -12,6 +14,8 @@ export interface WorkerCard {
   updatedAt: string
   directory?: string
   session: { loaded: boolean; streaming: boolean }
+  /** The worker's running shell jobs and subagents, which wake it when they end unless left to a person. */
+  background: { id: string; type: AsyncJobType; label: string; startedAt: string }[]
   assignment?: Pick<Assignment, 'id' | 'state' | 'createdAt' | 'startedAt' | 'endedAt' | 'deliveredAt' | 'idleAt'>
   progress?: Assignment['report']
   attention?: Ticket['attention']
@@ -51,6 +55,8 @@ export class WorkerView {
       ticketId: ticket.id, title: ticket.title, stage: ticketStage(ticket), outcome: ticket.ended?.outcome,
       updatedAt: ticket.updatedAt, directory: ticket.execution?.directory,
       session: { loaded: !!session, streaming: !!session && !session.isDisposed && session.isStreaming },
+      background: session && !session.isDisposed ? (session.asyncJobManager?.getRunningJobs({ ownerId: MAIN_AGENT_ID }) ?? []).map(job =>
+        ({ id: job.id, type: job.type, label: job.label.split('\n')[0]!.slice(0, 160), startedAt: new Date(job.startTime).toISOString() })) : [],
       assignment: assignment ? { id: assignment.id, state: assignment.state, createdAt: assignment.createdAt, startedAt: assignment.startedAt,
         endedAt: assignment.endedAt, deliveredAt: assignment.deliveredAt, idleAt: assignment.idleAt } : undefined,
       progress: assignment?.report,

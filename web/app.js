@@ -14,8 +14,8 @@ const settingsModal = document.querySelector('#settings-modal')
 const modelForm = document.querySelector('#model-form')
 const modelSave = document.querySelector('#model-save')
 const modelFeedback = document.querySelector('#model-feedback')
-const modelSelects = { eval: document.querySelector('#eval-model'), executor: document.querySelector('#executor-model') }
-const thinkingSelects = { eval: document.querySelector('#eval-thinking'), executor: document.querySelector('#executor-thinking') }
+const modelSelects = { eval: document.querySelector('#eval-model'), executor: document.querySelector('#executor-model'), advisor: document.querySelector('#advisor-model') }
+const thinkingSelects = { eval: document.querySelector('#eval-thinking'), executor: document.querySelector('#executor-thinking'), advisor: document.querySelector('#advisor-thinking') }
 const resetSession = document.querySelector('#reset-session')
 const wechatMessage = document.querySelector('#wechat-message')
 const wechatQr = document.querySelector('#wechat-qr')
@@ -171,6 +171,7 @@ async function refresh() {
 }
 function workerStatus(worker) {
   if (worker.session.streaming) return { text: '正在执行', kind: 'working' }
+  if (worker.background.length && worker.stage.stage !== 'person') return { text: '后台运行', kind: 'working' }
   if (worker.stage.stage === 'ended') return { text: worker.outcome === 'completed' ? '已完成' : '已结束', kind: 'ended' }
   if (worker.stage.stage === 'person') {
     const labels = { delivery: '投递失败', answer: '等待回复', review: '待确认结果', blocked: '已阻塞', failed: '执行失败' }
@@ -209,6 +210,11 @@ function renderWorkers(workers) {
     const pending = document.createElement('span')
     pending.textContent = worker.pendingInputs ? `${worker.pendingInputs} 条待投递` : '输入已投递'
     meta.append(progress, pending)
+    if (worker.background.length) {
+      const background = document.createElement('span')
+      background.textContent = `${worker.background.length} 个后台任务`
+      meta.append(background)
+    }
     card.append(statusText, title, meta)
     card.addEventListener('click', () => { void showWorker(worker.ticketId).catch(error => { workerSummary.textContent = error instanceof Error ? error.message : String(error) }) })
     workerList.append(card)
@@ -230,6 +236,7 @@ function renderWorker(worker) {
     ['Session', worker.session.streaming ? '正在执行' : worker.session.loaded ? '已加载，空闲' : '未加载'],
     ['Assignment', worker.assignment ? `${worker.assignment.state} · ${worker.assignment.id}` : '无'],
     ['待投递输入', String(worker.pendingInputs)],
+    ['后台任务', String(worker.background.length)],
     ['工作目录', worker.directory ?? '无'],
   ]
   for (const [label, value] of entries) {
@@ -248,6 +255,24 @@ function renderWorker(worker) {
     warning.className = 'worker-error message-text'
     warning.textContent = worker.delivery?.error ?? worker.attention.question
     workerDetail.append(warning)
+  }
+  if (worker.background.length) {
+    const section = document.createElement('section')
+    section.className = 'worker-section'
+    const heading = document.createElement('h4')
+    heading.textContent = `后台任务（${worker.background.length}）`
+    section.append(heading)
+    for (const job of worker.background) {
+      const item = document.createElement('div')
+      item.className = 'worker-fact'
+      const name = document.createElement('span')
+      name.textContent = `${job.type === 'task' ? '子代理' : 'Shell'} · ${new Date(job.startedAt).toLocaleTimeString('zh-CN')} 起`
+      const content = document.createElement('code')
+      content.textContent = `${job.id} · ${job.label}`
+      item.append(name, content)
+      section.append(item)
+    }
+    workerDetail.append(section)
   }
   if (worker.progress) {
     const section = document.createElement('section')
@@ -313,11 +338,11 @@ async function refreshWorkers() {
   } finally { refreshingWorkers = false }
 }
 workerButton.addEventListener('click', () => { workerModal.showModal(); void refreshWorkers() })
-function fillModelOptions(select, current, available) {
+function fillModelOptions(select, current, available, fallbackText) {
   select.replaceChildren()
   const fallback = document.createElement('option')
   fallback.value = ''
-  fallback.textContent = '跟随 OMP 默认'
+  fallback.textContent = fallbackText
   select.append(fallback)
   for (const model of available) {
     const option = document.createElement('option')
@@ -337,8 +362,8 @@ function fillModelOptions(select, current, available) {
   } else select.value = ''
 }
 function renderModelSettings(data) {
-  for (const role of ['eval', 'executor']) {
-    fillModelOptions(modelSelects[role], data.current[role], data.available)
+  for (const role of ['eval', 'executor', 'advisor']) {
+    fillModelOptions(modelSelects[role], data.current[role], data.available, role === 'advisor' ? '关闭' : '跟随 OMP 默认')
     thinkingSelects[role].value = data.current[role]?.thinkingLevel ?? 'auto'
   }
 }
@@ -363,7 +388,7 @@ modelForm.addEventListener('submit', async event => {
       return { provider, model, thinkingLevel: thinkingSelects[role].value }
     }
     const response = await fetch('/api/settings/models', { method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ eval: selection('eval'), executor: selection('executor') }) })
+      body: JSON.stringify({ eval: selection('eval'), executor: selection('executor'), advisor: selection('advisor') }) })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || '模型配置保存失败')
     renderModelSettings(data)

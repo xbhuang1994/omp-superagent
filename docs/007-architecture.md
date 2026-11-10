@@ -4,7 +4,7 @@
 
 The standalone service keeps the domain chain: GitHub or chat Trigger → Eval → Decision/Mandate → Ticket → Assignment. `Runtime` locks the state directory, opens schema-1 SQLite, validates optional GitHub, writes worker shims, registers GitHub and chat Sources, applies startup settings, restores the orchestrator, resumes Tickets, then starts passes and durable Effects. The watcher waits for `ready`.
 
-One persistent OMP orchestrator routes and assesses. Each Ticket has one persistent OMP worker in its own directory. Application tools call `Engine`; workers report through durable relay Effects; `Outbox` posts through GitHub or the originating chat conversation. No Cordis service, Feishu adapter, worker subagent manager or async background-job host exists.
+One persistent OMP orchestrator routes and assesses. Each Ticket has one persistent OMP worker in its own directory; its background shell jobs and `ticket-task` subagents are OMP jobs of that worker Session, bounded and stopped by `OMPExecutor` (003 Execution). Application tools call `Engine`; workers report through durable relay Effects; `Outbox` posts through GitHub or the originating chat conversation. No Cordis service or Feishu adapter exists.
 
 Chat Threads are subscribed but not fanned out (`ScopeResult.fanout: false`): a chat message reaches no worker by itself and goes to Eval as a candidate, so one orchestrator turn picks the ticket and attaches it; only that worker runs. A chat card lists up to 20 tickets in the compact `routingCard` form: `title`, `asked` (the start of the request the ticket was accepted from), `digest` (the worker's latest `orchestrator_report` `topic`, else its latest report that was not a drop), `state` and `updated`. A worker that hands the message back returns it as `handed_back`; once three tickets have, the card tells the orchestrator to accept it as new work. The main Session answers chatter itself: a message reaches a ticket only as its origin or an Input, never by its Thread alone.
 
@@ -31,7 +31,7 @@ Aliases remain `orchestrator-<stateKey>` and `worker-<ticketId>`; OMP UUIDs stay
 
 Every application message uses custom type `omp-superagent` and durable `requestId`. Delivery scans the full SessionManager branch and pending sends. Queue/steer/inject completes after the custom SessionEntry is visible and `flushToDisk()` succeeds; then domain acceptance and Input delivered/read commit. Duplicate IDs confirm again without another entry. Stop rejects pending sends for retry. Before-model hooks wait only for entry-visible confirmations because OMP emits initial entries after that hook.
 
-Worker tool guards reread Ticket state and block built-in/custom tools after termination. Orchestrator tools contain only application tools. Workers add only `read`, `bash`, `edit`, `write`.
+Worker tool guards reread Ticket state and block built-in/custom tools after termination, in the worker's subagents too. The orchestrator has `read`, `bash` and application tools. Workers add `read`, `bash`, `edit`, `write`, `task`, `wait`.
 
 ## Concurrency and shutdown
 
@@ -62,7 +62,7 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 
 | Files | Coverage |
 | --- | --- |
-| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts`, `tests/chat-source.spec.ts`, `tests/worker-panel.spec.ts`, `tests/model-settings.spec.ts` | Real OMP Sessions/delivery, executor slots, Web API, WeChat iLink/CDN, chat Ticket flow, worker progress and model settings |
+| `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts`, `tests/chat-source.spec.ts`, `tests/worker-panel.spec.ts`, `tests/model-settings.spec.ts` | Real OMP Sessions/delivery and subagents, executor slots and background work, Web API, WeChat iLink/CDN, chat Ticket flow, worker progress and model settings |
 | `tests/fixtures/omp-openai-server.ts`, `tests/fixtures/deployment.ts`, `tests/fixtures/git.ts`, `tests/fixtures/async.ts`, `tests/fixtures/web-panel-fixture.ts` | CLI/provider/browser fixtures |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/commands.spec.ts` | Deployment/environment/commands |
 | `tests/policy.spec.ts`, `tests/core-engine.spec.ts`, `tests/assessment.spec.ts` | Policy/engine/assessment |

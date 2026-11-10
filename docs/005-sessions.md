@@ -2,9 +2,11 @@
 
 ## Roles and isolation
 
-`OMPSessions` owns shared `AuthStorage` and `ModelRegistry`, while every Session gets a private `AgentRegistry` and isolated Settings. Async execution, automatic bash backgrounding and launch are disabled; retry and compaction stay enabled. The orchestrator compacts at 60k tokens, keeping 8k recent: every candidate resends its whole history, and routing facts come from the store in each card, so its window would otherwise grow toward the model's limit.
+`OMPSessions` owns shared `AuthStorage` and `ModelRegistry`, while every Session gets a private `AgentRegistry` and isolated Settings. Launch is disabled; retry and compaction stay enabled. The orchestrator keeps async execution and automatic bash backgrounding off. Workers turn both on, with a 60-second backgrounding threshold, `task.maxConcurrency` 8 and `task.maxRecursionDepth` 2. The orchestrator compacts at 60k tokens, keeping 8k recent: every candidate resends its whole history, and routing facts come from the store in each card, so its window would otherwise grow toward the model's limit.
 
-The orchestrator gets only application tools and no repository context files. A worker gets `read`, `bash`, `edit`, `write`, application tools, its Ticket mandate and the packaged GitHub skill. It retains repository `AGENTS.md`. A restricted extension checks Ticket liveness before every built-in or custom tool call.
+The orchestrator gets `read`, `bash`, its application tools and no repository context files. A worker gets `read`, `bash`, `edit`, `write`, `task`, `wait`, application tools, its Ticket mandate and the packaged GitHub skill. It retains repository `AGENTS.md`. Its only spawnable agent is the session agent `ticket-task` (`spawns`, `inheritedSessionAgents`). A restricted extension checks Ticket liveness before every built-in or custom tool call, its subagents' included, and guards `task` and `write agent://` as 003 Execution describes.
+
+A non-null `executor.advisor` turns on OMP's advisor for workers: `advisor.enabled` and `modelRoles.advisor` in their Settings, so a second model reviews each worker turn. The panel applies a change to loaded workers through `overrideModelRoles` and `setAdvisorEnabled`. OMP keeps subagents' advisor off.
 
 ## Persistence
 

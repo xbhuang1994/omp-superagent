@@ -1,6 +1,8 @@
 /** Persistent OMP orchestrator and worker Sessions, with isolated tools and durable delivery. */
 import { AgentRegistry, ModelRegistry, SessionManager, Settings, createAgentSession, discoverAuthStorage, loadSkillsFromDir,
-  type AgentSession, type AuthStorage, type CreateAgentSessionOptions, type CustomTool, type Skill } from '@oh-my-pi/pi-coding-agent'
+  type AgentDefinition, type AgentSession, type AuthStorage, type CreateAgentSessionOptions, type CustomTool, type Skill } from '@oh-my-pi/pi-coding-agent'
+import { getBundledAgent } from '@oh-my-pi/pi-coding-agent/task/agents'
+import { discoverAgents } from '@oh-my-pi/pi-coding-agent/task/discovery'
 import type { ImageContent, TextContent } from '@oh-my-pi/pi-ai'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
@@ -31,6 +33,38 @@ const SESSION_SETTINGS = {
  * it early. Routing facts come from the store in each card, so a summary loses nothing a decision needs.
  */
 const ORCHESTRATOR_SETTINGS = { ...SESSION_SETTINGS, 'compaction.thresholdTokens': 60_000, 'compaction.keepRecentTokens': 8_000 } as const
+/**
+ * Workers run long commands and subagents as OMP background jobs: a command still running after 60 s, or when a message
+ * arrives, moves to the background, and each job's end wakes the worker with its result. The Executor bounds and stops them.
+ */
+const WORKER_SETTINGS = {
+  ...SESSION_SETTINGS,
+  'async.enabled': true,
+  'bash.autoBackground.enabled': true,
+  'bash.autoBackground.thresholdMs': 60_000,
+  'task.maxConcurrency': 8,
+  'task.maxRecursionDepth': 2,
+} as const
+const WORK_TOOLS = ['read', 'bash', 'edit', 'write']
+/**
+ * The only agent a worker may spawn. OMP's bundled `task` agent declares no tools, so under the worker's restricted tool
+ * list it would get none; this one keeps its prompt with the worker's work tools and no model of its own, so it runs on the
+ * worker's current model. It is a session agent: a discovered definition of the same name would take precedence.
+ */
+export const SUBAGENT = 'ticket-task'
+
+/**
+ * Explicit subagent names get the ticket's prefix: OMP registers every subagent in one process-wide registry, so two
+ * workers choosing the same name would collide. Generated names are already unique in the process.
+ */
+function ticketTaskNames(input: Record<string, unknown>, ticketId: string): Record<string, unknown> {
+  if (!Array.isArray(input.tasks)) return input
+  const prefix = `${ticketId.slice(0, 8)}-`
+  return { ...input, tasks: input.tasks.map((item: unknown) => item && typeof item === 'object' && 'name' in item
+    && typeof item.name === 'string' && !item.name.startsWith(prefix) ? { ...item, name: `${prefix}${item.name}` } : item) }
+}
+/** OMP's `modelRoles` selector for a role model: `provider/model`, with `:level` when a thinking level is set. */
+const roleSelector = (model: RoleModel): string => `${model.provider}/${model.model}${model.thinkingLevel ? `:${model.thinkingLevel}` : ''}`
 export interface ChatAttachment { name: string; mediaType: string; data: string }
 type ChatContent = string | (TextContent | ImageContent)[]
 interface AttachmentMetadata { name: string; mediaType: string; kind: 'image' | 'text' | 'file'; path?: string }
@@ -92,6 +126,7 @@ export class OMPSessions {
   private authStorage!: AuthStorage
   private modelRegistry!: ModelRegistry
   private githubSkill!: Skill
+  private subagent!: AgentDefinition
 
   constructor(private readonly host: OMPSessionsHost) {
     this.ready = this.initialize()
@@ -107,13 +142,18 @@ export class OMPSessions {
     this.modelRegistry = new ModelRegistry(this.authStorage, join(agentDir, 'models.yml'), { settings: baseSettings })
     await this.modelRegistry.refresh()
     const settings = this.host.store.settings()
-    for (const model of [settings.eval.model, settings.executor.model]) {
+    for (const model of [settings.eval.model, settings.executor.model, settings.executor.advisor]) {
       if (model && !this.modelRegistry.find(model.provider, model.model)) throw new Error(`Unknown OMP model: ${model.provider}/${model.model}`)
     }
     const skills = await loadSkillsFromDir({ dir: packagePath('skills'), source: 'omp-superagent' })
     const github = skills.skills.filter(skill => skill.filePath === bundledSkills.github.path)
     if (github.length !== 1) throw new Error(`Expected one bundled GitHub skill at ${bundledSkills.github.path}; found ${github.length}`)
     this.githubSkill = github[0]!
+    const task = getBundledAgent('task')
+    if (!task) throw new Error('OMP bundled task agent is unavailable')
+    const { model: _model, ...inherited } = task
+    this.subagent = { ...inherited, name: SUBAGENT, tools: WORK_TOOLS, spawns: [SUBAGENT], source: 'bundled',
+      description: 'Helper for one independent slice of this ticket, in its directory with read, bash, edit and write; it cannot report or message anyone, so its result comes back to you' }
   }
 
   get(sessionId: string): AgentSession | undefined { return this.loaded.get(sessionId) }
@@ -125,18 +165,30 @@ export class OMPSessions {
       .sort((left, right) => `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`))
   }
 
-  /** Apply one validated role selector to loaded, non-disposed Sessions; null affects only future Sessions. */
-  async applyModel(role: 'orchestrator' | 'worker', selection: RoleModel | null): Promise<void> {
-    await this.ready
-    if (!selection) return
-    const model = this.modelRegistry.find(selection.provider, selection.model)
-    if (!model) throw new Error(`Unknown OMP model: ${selection.provider}/${selection.model}`)
-    const thinkingLevel = selection.thinkingLevel as never
+  /**
+   * Apply one validated role selector to loaded, non-disposed Sessions; a null model affects only future Sessions, while a
+   * null advisor turns the workers' advisor off.
+   */
+  async applyModel(role: 'orchestrator' | 'worker' | 'advisor', selection: RoleModel | null): Promise<void> {
+    await this.checkModel(selection)
     for (const [sessionId, session] of this.loaded) {
       if (session.isDisposed || (role === 'orchestrator') !== (sessionId === this.host.masterId)) continue
-      await session.setModel(model, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
+      if (role === 'advisor') {
+        if (selection) session.settings.overrideModelRoles({ advisor: roleSelector(selection) })
+        session.setAdvisorEnabled(!!selection)
+        continue
+      }
+      if (!selection) continue
+      const thinkingLevel = selection.thinkingLevel as never
+      await session.setModel(this.modelRegistry.find(selection.provider, selection.model)!, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
       session.setThinkingLevel(thinkingLevel, false)
     }
+  }
+
+  /** @throws for a selector naming a model OMP does not know. */
+  async checkModel(selection: RoleModel | null): Promise<void> {
+    await this.ready
+    if (selection && !this.modelRegistry.find(selection.provider, selection.model)) throw new Error(`Unknown OMP model: ${selection.provider}/${selection.model}`)
   }
 
   async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
@@ -174,11 +226,21 @@ export class OMPSessions {
     const mandate = ticket ? mandateInstructions(ticket.mandate) : ''
     const customSystemPrompt = mandate ? `${composed}\n\n${mandate}` : composed
     const tools = this.host.tools(sessionId, ticket)
-    const toolNames = [...role === 'worker' ? ['read', 'bash', 'edit', 'write'] : ['read', 'bash'], ...tools.map(tool => tool.name)]
+    const toolNames = [...role === 'worker' ? [...WORK_TOOLS, 'task', 'wait'] : ['read', 'bash'], ...tools.map(tool => tool.name)]
+    // Subagents inherit these prepared extensions, so the guard covers their tool calls too.
     const extensions: CreateAgentSessionOptions['extensions'] = role === 'worker' && ticket ? [pi => {
-      pi.on('tool_call', () => {
+      pi.on('tool_call', async event => {
         const current = this.host.store.tickets.get(ticket.id)
-        return !current || !liveTicket(current) ? { block: true, reason: 'Ticket ended; new work needs a new authorized ticket' } : undefined
+        if (!current || !liveTicket(current)) return { block: true, reason: 'Ticket ended; new work needs a new authorized ticket' }
+        // Finished subagents stay in a process-wide lifecycle that another worker's disposal releases; spawn anew instead.
+        if (event.toolName === 'write' && typeof event.input.path === 'string' && event.input.path.startsWith('agent://')) {
+          return { block: true, reason: 'A finished subagent is not continued; spawn a new one with task' }
+        }
+        if (event.toolName !== 'task') return undefined
+        if ((await discoverAgents(cwd)).agents.some(agent => agent.name === SUBAGENT)) {
+          return { block: true, reason: `A repository or user agent definition named ${SUBAGENT} would replace the ticket subagent; subagents are unavailable for this ticket` }
+        }
+        return { input: ticketTaskNames(event.input, ticket.id) }
       })
     }] : []
     const { session } = await createAgentSession({
@@ -187,7 +249,9 @@ export class OMPSessions {
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
       agentRegistry: new AgentRegistry(),
-      settings: Settings.isolated(role === 'orchestrator' ? ORCHESTRATOR_SETTINGS : SESSION_SETTINGS),
+      // A worker advisor is a second model that reviews each worker turn and injects notes; subagents never get one.
+      settings: Settings.isolated(role === 'orchestrator' ? ORCHESTRATOR_SETTINGS : { ...WORKER_SETTINGS, 'advisor.enabled': !!settings.executor.advisor,
+        ...settings.executor.advisor ? { modelRoles: { advisor: roleSelector(settings.executor.advisor) } } : {} }),
       sessionManager,
       customSystemPrompt,
       noContextFiles: role === 'orchestrator',
@@ -200,6 +264,7 @@ export class OMPSessions {
       restrictToolNames: true,
       allowRestrictedCustomTools: true,
       extensions,
+      ...role === 'worker' ? { spawns: SUBAGENT, inheritedSessionAgents: [this.subagent] } : {},
       preloadedPreparedExtensions: extensions.map((factory, index) => ({ path: `<omp-superagent-worker-${index}>`, resolvedPath: `<omp-superagent-worker-${index}>`, factory, error: null })),
       bindProcessState: false,
       hasUI: false,

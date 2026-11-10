@@ -11,7 +11,8 @@
 - **GitHub**：在 Issue/PR 里 `@agent 修一下 README 的错别字` → 确认收到 → 干活 → 回帖交付结果。
 - **网页面板**（默认 `http://127.0.0.1:3082/`）：聊天、上传附件（≤3 个/条，≤5 MiB/个）、查看每个 Worker 进度、在线切换模型、重置会话。
 - **微信**：面板「设置 → 微信」扫码绑定，直接在微信里发需求、收文件/图片。
-- **不做**：飞书、DSH 托管、在线改 Prompt、Worker 子代理、异步后台任务。
+- **后台任务与子代理**：Worker 的长命令超过 60 秒自动转后台，跑完唤醒 Worker；Worker 可派 `ticket-task` 子代理并行处理独立部分（每个 Worker 最多 8 个、嵌套 2 层）。回合结束后后台最多再跑 30 分钟；交接给人后留下的服务（如 dev server）保留到任务结束。
+- **不做**：飞书、DSH 托管、在线改 Prompt。
 
 ## 快速开始
 
@@ -33,7 +34,7 @@
     "github": { "allowed": [{ "id": "your-github-login" }] }
   } },
   "eval":     { "mode": "observe", "model": null },
-  "executor": { "model": null, "maxWorkers": 3,
+  "executor": { "model": null, "advisor": null, "maxWorkers": 3,
                 "prepare": "git clone --quiet /srv/repositories/repo \"$OMP_SUPERAGENT_DIR\"" }
 }
 ```
@@ -45,6 +46,7 @@
 | `executor.maxWorkers` | 同时工作的 Worker 上限 |
 | `executor.prepare` | 为每个任务准备目录的 shell 命令，环境变量 `$OMP_SUPERAGENT_DIR` 即任务目录 |
 | `*.model` | `null` 用 OMP 默认；或 `{provider, model, thinkingLevel}`；写了不存在的模型会启动失败，不会悄悄回退 |
+| `executor.advisor` | Worker 顾问模型，格式同上；`null` 关闭。开启后第二个模型审阅 Worker 每个回合并插入建议，也可在「设置 → 模型」在线修改 |
 | `web` | `{enabled, host, port}`，`port: 0` 为随机端口 |
 
 **2. 构建并启动**
@@ -85,7 +87,7 @@ flowchart LR
 
 **关键设计**
 
-- **两类会话**：调度员只拿"应用工具"，不碰代码；Worker 只额外获得 `read` / `bash` / `edit` / `write`，且在任务结束后工具会被拦截。
+- **两类会话**：调度员拿 `read` / `bash` 和应用工具，不开后台任务；Worker 拿 `read` / `bash` / `edit` / `write` / `task` / `wait` 和应用工具，任务结束后它和子代理的工具都会被拦截。
 - **两份存储**：SQLite（`orchestrator.sqlite`）存领域状态、持久化 Effect 和 Outbox 顺序；JSONL 存对话记录与幂等消息 ID。重启后未完成的任务会续跑，已投递的消息不会重复。
 - **聊天路由**：一条聊天消息不会群发给所有 Worker，调度员只把它接到最匹配的那个 Ticket；需要新活就开新 Ticket；闲聊自己回。
 - **并发**：`WorkerSlots` 限制同时运行数，唤醒优先于新启动，真人追问可临时多占一个名额。

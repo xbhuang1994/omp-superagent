@@ -83,13 +83,14 @@ export class Runtime implements SourceHost {
     try {
       const report = (error: unknown) => { console.warn(`omp-superagent: ${String(error)}`) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
-      const configuredModels = { eval: this.startup.eval.model, executor: this.startup.executor.model }
+      const configuredModels = { eval: this.startup.eval.model, executor: this.startup.executor.model, advisor: this.startup.executor.advisor }
       const baseline = store.get(KV.runtime.startupModels)
       if (baseline) {
         const saved = store.settings()
         for (const role of ['eval', 'executor'] as const) {
           if (JSON.stringify(configuredModels[role]) === JSON.stringify(baseline[role])) this.startup[role].model = saved[role].model
         }
+        if (JSON.stringify(configuredModels.advisor) === JSON.stringify(baseline.advisor ?? null)) this.startup.executor.advisor = saved.executor.advisor
       }
       store.set(KV.runtime.startupModels, configuredModels)
       const path = withoutDirectory(process.env.PATH ?? '', workerBin(machine.stateDir))

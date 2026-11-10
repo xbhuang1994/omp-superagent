@@ -20,7 +20,7 @@ export interface WorkerReport {
   /** What the ticket is about now, in a sentence or two; replaces the ticket's `digest`. */
   topic?: string
 }
-const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the current worktree, git history and GitHub state before continuing. Do not repeat an already completed external operation. Finish the original assignment and report its status.'
+const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the current worktree, git history and GitHub state before continuing. Do not repeat an already completed external operation. Background jobs and subagents of the previous run stopped with it; rerun what you still need. Finish the original assignment and report its status.'
 
 /**
  * Assignments records what the Executor and its workers report about the Assignments that run tickets: one started, Inputs

@@ -32,7 +32,8 @@ export const KV = {
     /** The built-in text of a prompt part an override was edited from, by its `base`, which shows what an upgrade changed. */
     builtIn: family<string, [base: string]>('prompt-built-in:') },
   /** Runtime: the main Session's ID. */
-  runtime: { masterId: record<string>('master-id'), startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null }>('startup-models') },
+  runtime: { masterId: record<string>('master-id'),
+    startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null; advisor?: RoleModel | null }>('startup-models') },
   /** Sessions: OMP JSONL file by durable external alias. */
   sessions: { files: family<string, [alias: string]>('session-file:') },
   /** Per-Source resolved display names mapped from source-native IDs. */

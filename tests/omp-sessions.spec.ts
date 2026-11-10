@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -11,7 +11,7 @@ import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { KV } from '../src/kv.ts'
 import type { Ticket } from '../src/core/index.ts'
-import { startOmpOpenAIServer, writeFixtureModels, type FixtureReply, type OmpFixture } from './fixtures/omp-openai-server.ts'
+import { incomingText, startOmpOpenAIServer, writeFixtureModels, type FixtureReply, type FixtureRequest, type OmpFixture } from './fixtures/omp-openai-server.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 const cleanups: (() => Promise<void>)[] = []
@@ -33,9 +33,9 @@ function requestIds(session: NonNullable<OMPSessions['get'] extends (id: string)
     return details && typeof details === 'object' && 'requestId' in details && typeof details.requestId === 'string' ? [details.requestId] : []
   })
 }
-async function fixture(handler: (count: number) => FixtureReply | Promise<FixtureReply> = () => ({ content: 'ok' }), model = 'fixture') {
+async function fixture(handler: (count: number, request: FixtureRequest) => FixtureReply | Promise<FixtureReply> = () => ({ content: 'ok' }), model = 'fixture') {
   const dir = mkdtempSync(join(tmpdir(), 'omp-sessions-'))
-  const server = await startOmpOpenAIServer((_request, count) => handler(count))
+  const server = await startOmpOpenAIServer((request, count) => handler(count, request))
   await writeFixtureModels(join(dir, 'omp'), server.baseUrl, ['fixture', 'fixture-two'])
   const store = new Store(join(dir, 'db.sqlite'))
   const settings = SettingsSchema.parse({ eval: { model: { provider: 'fixture', model } }, executor: { model: { provider: 'fixture', model } } })
@@ -71,7 +71,7 @@ it('runs a JSON Schema custom tool in restricted orchestrator and worker allowli
   await workerEnd.promise
   expect(f.probe).toHaveBeenCalledTimes(2)
   expect(f.server.requests[0]?.tools?.map(tool => tool.function?.name)?.sort()).toEqual(['bash', 'fixture_probe', 'read'])
-  expect(f.server.requests[2]?.tools?.map(tool => tool.function?.name)?.sort()).toEqual(['bash', 'edit', 'fixture_probe', 'read', 'write'])
+  expect(f.server.requests[2]?.tools?.map(tool => tool.function?.name)?.sort()).toEqual(['bash', 'edit', 'fixture_probe', 'read', 'task', 'wait', 'write'])
 })
 
 it('blocks built-in and custom tools as soon as the Ticket ends', async () => {
@@ -92,6 +92,61 @@ it('blocks built-in and custom tools as soon as the Ticket ends', async () => {
   expect(existsSync(join(f.dir, 'blocked.txt'))).toBe(false)
   expect(f.probe).not.toHaveBeenCalled()
   expect(work.messages.some(message => message.role === 'toolResult' && message.content.some(block => block.type === 'text' && block.text.includes('Ticket ended')))).toBe(true)
+})
+
+it('runs a ticket-task subagent with the worker tools as a background job and blocks it once the Ticket ends', async () => {
+  let store!: Store
+  let current!: Ticket
+  const subagentTools: string[][] = []
+  const f = await fixture((_count, request) => {
+    const tools = request.tools?.map(tool => tool.function?.name ?? '').sort() ?? []
+    const answered = request.messages.at(-1)?.role === 'tool'
+    if (!tools.includes('wait')) {
+      subagentTools.push(tools)
+      if (answered) return { content: 'Subagent done.' }
+      store.tickets.save({ ...current, ended: { at: new Date().toISOString(), by: 'human', outcome: 'stopped' } })
+      return { toolCalls: [{ name: 'bash', arguments: { command: 'touch subagent.txt' } }] }
+    }
+    if (!answered && incomingText(request).includes('spawn-fixture-probe')) {
+      return { toolCalls: [{ name: 'task', arguments: { context: 'Fixture', tasks: [{ name: 'Probe', task: 'Touch a file', solutionSpace: 'one' }] } }] }
+    }
+    return { content: 'Worker done.' }
+  })
+  store = f.store
+  current = ticket(f.dir)
+  store.tickets.save(current)
+  const work = await f.sessions.ensure('worker-ticket-1', f.dir, 'Worker', 'worker', current)
+  const ends: { terminal: boolean; awaiting: boolean }[] = []
+  const ended = Promise.withResolvers<void>()
+  work.subscribe(event => {
+    if (event.type !== 'agent_end') return
+    ends.push({ terminal: event.isTerminal !== false, awaiting: event.awaitingAsyncWork === true })
+    if (event.isTerminal !== false) ended.resolve()
+  })
+  await f.sessions.prompt('worker-ticket-1', 'work-1', 'spawn-fixture-probe', 'queue')
+  await ended.promise
+  expect(ends[0]).toEqual({ terminal: false, awaiting: true })
+  expect(subagentTools[0]).toEqual(['bash', 'edit', 'read', 'task', 'write'])
+  expect(existsSync(join(f.dir, 'subagent.txt'))).toBe(false)
+  expect(JSON.stringify(f.server.requests)).toContain('ticket-1-Probe')
+})
+
+it('refuses task when a discovered definition shadows ticket-task, and never continues a finished subagent', async () => {
+  const f = await fixture((_count, request) => request.messages.at(-1)?.role === 'tool' ? { content: 'done' } : { toolCalls: [
+    { name: 'write', arguments: { path: 'agent://Probe', content: 'Continue' } },
+    { name: 'task', arguments: { context: 'Fixture', tasks: [{ task: 'Touch a file', solutionSpace: 'one' }] } },
+  ] })
+  mkdirSync(join(f.dir, '.omp', 'agents'), { recursive: true })
+  writeFileSync(join(f.dir, '.omp', 'agents', 'ticket-task.md'), '---\nname: ticket-task\ndescription: Repository override\n---\nOverride.\n')
+  const current = ticket(f.dir)
+  f.store.tickets.save(current)
+  const work = await f.sessions.ensure('worker-ticket-1', f.dir, 'Worker', 'worker', current)
+  const ended = Promise.withResolvers<void>(); work.subscribe(event => { if (event.type === 'agent_end' && event.isTerminal !== false) ended.resolve() })
+  await f.sessions.prompt('worker-ticket-1', 'work-1', 'work', 'queue')
+  await ended.promise
+  const results = work.messages.flatMap(message => message.role === 'toolResult' ? message.content.flatMap(block => block.type === 'text' ? [block.text] : []) : [])
+  expect(results.some(text => text.includes('A finished subagent is not continued'))).toBe(true)
+  expect(results.some(text => text.includes('would replace the ticket subagent'))).toBe(true)
 })
 
 it('deduplicates requestId, persists holds across reopen, and injects without a turn', async () => {
@@ -156,6 +211,23 @@ it('overrides a restored model when configured and inherits it when null', async
   const restored = await inherited.ensure('orchestrator-test', f.dir, 'Main', 'orchestrator')
   expect(restored.model?.id).toBe('fixture-two')
   await inherited.stopAll()
+})
+
+it('reviews worker turns with the configured advisor model and turns the advisor off live', async () => {
+  const f = await fixture(count => count === 1 ? { toolCalls: [{ name: 'fixture_probe', arguments: { value: 'yes' } }] } : { content: 'done' })
+  f.store.saveSettings({ ...f.store.settings(), executor: { ...f.store.settings().executor, advisor: { provider: 'fixture', model: 'fixture-two' } } })
+  const current = ticket(f.dir)
+  f.store.tickets.save(current)
+  const work = await f.sessions.ensure('worker-ticket-1', f.dir, 'Worker', 'worker', current)
+  expect(work.isAdvisorEnabled()).toBe(true)
+  const ended = Promise.withResolvers<void>(); work.subscribe(event => { if (event.type === 'agent_end' && event.isTerminal !== false) ended.resolve() })
+  await f.sessions.prompt('worker-ticket-1', 'work-1', 'work', 'queue')
+  await ended.promise
+  const models = () => f.server.requests.map(request => 'model' in request ? request.model : undefined)
+  await vi.waitFor(() => { expect(models()).toContain('fixture-two') })
+  expect(models()[0]).toBe('fixture')
+  await f.sessions.applyModel('advisor', null)
+  expect(work.isAdvisorEnabled()).toBe(false)
 })
 
 it('adapts Zod parsing and JSON results without a model', async () => {

@@ -83,7 +83,7 @@
       </nav>
       <section id="settings-models" class="settings-page" role="tabpanel">
         <h3>模型配置</h3>
-        <p class="settings-intro">分别选择 orchestrator 和后台 worker 使用的模型。保存后立即应用，并跨重启保留。</p>
+        <p class="settings-intro">分别选择 orchestrator 和后台 worker 使用的模型，以及审阅 worker 每个回合的顾问模型。保存后立即应用，并跨重启保留。</p>
         <form id="model-form" class="model-form">
           <fieldset class="model-card">
             <legend>Orchestrator</legend>
@@ -98,6 +98,10 @@
             <select id="executor-model"><option value="">跟随 OMP 默认</option></select>
             <label for="executor-thinking">Thinking level</label>
             <select id="executor-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
+            <label for="advisor-model">顾问模型（审阅每个 worker 回合并插入建议）</label>
+            <select id="advisor-model"><option value="">关闭</option></select>
+            <label for="advisor-thinking">顾问 Thinking level</label>
+            <select id="advisor-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
           </fieldset>
           <div class="model-actions"><span id="model-feedback" class="feedback" role="status"></span><button id="model-save" type="submit">保存并应用</button></div>
         </form>

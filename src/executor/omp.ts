@@ -1,5 +1,5 @@
 /** OMP executor: one persistent worker Session and workspace directory per Ticket. */
-import type { AgentSession } from '@oh-my-pi/pi-coding-agent'
+import { MAIN_AGENT_ID, type AgentSession } from '@oh-my-pi/pi-coding-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { key, latestAssignment, latestReport, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
@@ -19,6 +19,8 @@ import type { HealthEntry } from '../infra/health.ts'
 export const workerSessionId = (ticketId: string): string => `worker-${ticketId}`
 export const ticketOfSession = (sessionId: string): string | undefined => sessionId.startsWith('worker-') ? sessionId.slice('worker-'.length) : undefined
 const PREPARE_TIMEOUT_MS = 10 * 60_000
+/** How long a worker's background work may run on after its turn ends before its shell jobs stop and it is reported waiting. */
+const BACKGROUND_LIMIT_MS = 30 * 60_000
 const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text'
 /** Workspace prepare failure, which must not be retried automatically. */
 class PrepareFailed extends Error {}
@@ -113,6 +115,16 @@ function resumeInputs(ticket: Ticket): { marker: TicketInput; trigger: TicketInp
   return trigger && { marker, trigger }
 }
 
+/** Whether the worker's last word hands the ticket to a person: blocked or failed, or ready or a question with no Input since. */
+function handedOff(ticket: Ticket): boolean {
+  const report = latestReport(ticket)
+  const assignment = runningAssignment(ticket)
+  if (!report || !assignment) return false
+  if (report.state === 'blocked' || report.state === 'failed') return true
+  const quiet = !assignment.deliveredAt || assignment.deliveredAt < report.at
+  return quiet && (report.state === 'ready' || !!ticket.attention)
+}
+
 /** Startup reservations plus actual agent_start events enforce worker concurrency. */
 export class WorkerSlots {
   private readonly starting = new Map<string, 'launch' | 'wake' | 'person'>()
@@ -136,6 +148,10 @@ export class OMPExecutor implements Executor {
   private readonly subscriptions = new Map<string, () => void>()
   private readonly unloadAfterEnd = new Set<string>()
   private readonly stopping = new Map<string, Promise<void>>()
+  /** The background-work limit of workers whose turn ended while their jobs or subagents run, by ticket. */
+  private readonly limits = new Map<string, NodeJS.Timeout>()
+  /** Shell jobs a worker left to a person at a handoff, by ticket: they run until the Assignment ends and wake no one. */
+  private readonly left = new Map<string, Set<string>>()
   private readonly slots: WorkerSlots
 
   constructor(private readonly host: ExecutorHost) {
@@ -252,6 +268,7 @@ export class OMPExecutor implements Executor {
       }
       this.unloadAfterEnd.delete(ticket.id)
       this.runningTickets.delete(ticket.id)
+      this.clearBackground(ticket.id)
       const stopping = this.host.sessions.stop(workerSessionId(ticket.id), reason)
       this.stopping.set(ticket.id, stopping)
       void stopping.catch((error: unknown) => this.host.health.set({ state: 'error', detail: String(error), at: new Date().toISOString() }))
@@ -279,20 +296,88 @@ export class OMPExecutor implements Executor {
     const unsubscribe = session.subscribe(event => {
       if (event.type === 'agent_start') {
         this.runningTickets.add(ticketId)
+        clearTimeout(this.limits.get(ticketId))
+        this.limits.delete(ticketId)
         return
       }
-      if (event.type !== 'agent_end' || event.isTerminal === false) return
-      this.runningTickets.delete(ticketId)
-      if (this.unloadAfterEnd.delete(ticketId)) {
-        void this.host.sessions.stop(workerSessionId(ticketId), 'Ticket ended').catch((error: unknown) => this.background(Promise.reject(error)))
-        return
-      }
-      void this.background(this.workerEnded(ticketId, session))
+      if (event.type !== 'agent_end') return
+      if (event.isTerminal !== false) this.turnOver(ticketId, session)
+      else if (event.awaitingAsyncWork) this.backgrounded(ticketId, session)
     })
     this.subscriptions.set(ticketId, unsubscribe)
   }
 
-  private async workerEnded(ticketId: string, session: AgentSession): Promise<void> {
+  /** Nothing the worker runs wakes it again: free its slot and report, or unload a ticket that ended meanwhile. */
+  private turnOver(ticketId: string, session: AgentSession, note?: string): void {
+    this.runningTickets.delete(ticketId)
+    clearTimeout(this.limits.get(ticketId))
+    this.limits.delete(ticketId)
+    if (this.unloadAfterEnd.delete(ticketId)) {
+      void this.host.sessions.stop(workerSessionId(ticketId), 'Ticket ended').catch((error: unknown) => this.background(Promise.reject(error)))
+      return
+    }
+    void this.background(this.workerEnded(ticketId, session, note))
+  }
+
+  /**
+   * The worker's turn ended while its jobs or subagents run; their ends wake it, so it keeps its slot. A handoff to a person
+   * ends that at once: its subagents stop, and its own shell jobs, such as a server offered for review, run on until the
+   * Assignment ends without waking it. Otherwise the background work runs for at most BACKGROUND_LIMIT_MS.
+   */
+  private backgrounded(ticketId: string, session: AgentSession): void {
+    const ticket = this.host.store.tickets.get(ticketId)
+    if (this.unloadAfterEnd.has(ticketId)) {
+      this.turnOver(ticketId, session)
+      return
+    }
+    if (ticket && handedOff(ticket)) {
+      this.leaveToPerson(ticketId, session)
+      this.turnOver(ticketId, session)
+      return
+    }
+    if (!this.limits.has(ticketId)) this.limits.set(ticketId, setTimeout(() => this.limitReached(ticketId, session), BACKGROUND_LIMIT_MS))
+  }
+
+  /** Acknowledged jobs deliver nothing, so neither the jobs left running nor the cancelled ones wake the worker. */
+  private leaveToPerson(ticketId: string, session: AgentSession): void {
+    const jobs = session.asyncJobManager
+    if (!jobs) return
+    const running = jobs.getRunningJobs({ ownerId: MAIN_AGENT_ID })
+    jobs.acknowledgeDeliveries(running.map(job => job.id))
+    const left = this.left.get(ticketId) ?? new Set<string>()
+    for (const job of running) {
+      if (job.type === 'bash') left.add(job.id)
+      else jobs.cancel(job.id)
+    }
+    this.left.set(ticketId, left)
+  }
+
+  /** Background work outlived its limit: stop the worker's shell jobs without waking it and report it waiting; subagents go on in its slot. */
+  private limitReached(ticketId: string, session: AgentSession): void {
+    this.limits.delete(ticketId)
+    const jobs = session.asyncJobManager
+    if (!jobs || session.isDisposed || this.host.sessions.get(workerSessionId(ticketId)) !== session) return
+    const left = this.left.get(ticketId)
+    const running = jobs.getRunningJobs({ ownerId: MAIN_AGENT_ID }).filter(job => !left?.has(job.id))
+    const shell = running.filter(job => job.type === 'bash')
+    const subagents = running.filter(job => job.type === 'task')
+    jobs.acknowledgeDeliveries(shell.map(job => job.id))
+    for (const job of shell) jobs.cancel(job.id)
+    const stopped = shell.map(job => `${job.id} (${job.label.split('\n')[0]})`).join(', ') || 'none'
+    const note = `Background work outlived ${BACKGROUND_LIMIT_MS / 60_000} minutes after the turn. Stopped shell jobs: ${stopped}. `
+      + `Subagents still running: ${subagents.map(job => job.id).join(', ') || 'none'}.`
+    if (subagents.length) void this.background(this.workerEnded(ticketId, session, note))
+    else this.turnOver(ticketId, session, note)
+  }
+
+  private clearBackground(ticketId: string): void {
+    clearTimeout(this.limits.get(ticketId))
+    this.limits.delete(ticketId)
+    this.left.delete(ticketId)
+  }
+
+  /** `note` adds what the Executor did to the worker's background work to a waiting report. */
+  private async workerEnded(ticketId: string, session: AgentSession, note?: string): Promise<void> {
     const ticket = this.host.store.tickets.get(ticketId)
     const assignment = ticket && liveTicket(ticket) ? runningAssignment(ticket) : undefined
     if (!ticket || !assignment || this.host.closing()) return
@@ -305,7 +390,7 @@ export class OMPExecutor implements Executor {
     }
     const report = latestReport(ticket)
     if (report?.state === 'ready' || report?.state === 'blocked' || report?.state === 'failed' || ticket.attention) return
-    const summary = text || report?.summary || ''
+    const summary = [text || report?.summary, note].filter(Boolean).join('\n\n')
     this.host.store.atomic(() => {
       const updated = this.host.engine.report(ticketId, { state: 'waiting', summary })
       if (summary) {
@@ -374,6 +459,9 @@ export class OMPExecutor implements Executor {
     for (const unsubscribe of this.subscriptions.values()) unsubscribe()
     this.subscriptions.clear()
     this.runningTickets.clear()
+    for (const limit of this.limits.values()) clearTimeout(limit)
+    this.limits.clear()
+    this.left.clear()
   }
 
   private async background(work: Promise<void>): Promise<void> {

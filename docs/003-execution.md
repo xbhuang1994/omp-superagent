@@ -8,7 +8,21 @@ Every subsequent Input uses the Ticket's single durable delivery Effect. Before 
 
 A resumed Assignment's first message carries the marker and the message that resumed it, after the restart JSON, and confirms both Inputs delivered at once: a worker that restarted on the bare marker could judge the ticket done and report `dropped` before the message arrived, ending the ticket with the message unread.
 
-Only terminal `agent_end` completes a turn. Intermediate retry/compaction/async ends do not. OMP handles model retries; the Executor has no second retry loop. A ready/attention/blocked/failed report is already a handoff. Otherwise the Executor writes `waiting` with the final assistant text and relays it. Final assistant error becomes `failed`.
+Only terminal `agent_end` completes a turn. Intermediate retry/compaction ends do not. OMP handles model retries; the Executor has no second retry loop. A ready/attention/blocked/failed report is already a handoff. Otherwise the Executor writes `waiting` with the final assistant text and relays it. Final assistant error becomes `failed`.
+
+## Background work
+
+A worker command still running after 60 seconds, or when a message is steered in, becomes an OMP background job. A worker spawns subagents with `task`, each a background job of the worker. A job's end wakes the worker in the same Session with its result.
+
+A turn that ends while jobs run emits a non-terminal `agent_end` with `awaitingAsyncWork`. The Ticket keeps its slot and stays working, with no waiting report; the job's wake starts the next turn in that slot. A turn that ends with nothing running completes as above.
+
+After such a turn, background work has 30 minutes. At the limit the Executor acknowledges and cancels the worker's own shell jobs, so their end wakes no one, and reports `waiting` with the worker's last words, the stopped jobs and the subagents still running. Subagents go on in the slot and wake the worker when they end.
+
+A handoff to a person frees the slot at once: a ready report or a question with no Input delivered since, or a blocked or failed report. Its subagents are cancelled. Its shell jobs, such as a server offered for review, are acknowledged and run until the Assignment ends; they hold no slot, are exempt from the limit in later turns, and their end wakes no one. OMP emits no further `agent_end` after an acknowledgement, so the Executor completes that turn itself.
+
+When an Assignment ends, Session disposal cancels every job, including those left to a person. A host restart ends them all; the recovery note tells the worker to rerun what it still needs.
+
+Subagents use the session agent `ticket-task`: OMP's bundled `task` prompt with `read`, `bash`, `edit`, `write`, the worker's current model, at most 8 at once per worker and 2 levels deep. They get no application tools, so only the worker reports. The worker's Ticket guard extension is inherited and blocks their tools once the Ticket ends. `task` is refused when a repository or user agent definition named `ticket-task` would replace it. Explicit subagent names get a ticket prefix, because OMP registers subagents process-wide. A finished subagent is never continued (`write agent://…` is refused): disposing any worker Session releases every worker's finished subagents.
 
 ## Stop and recovery
 

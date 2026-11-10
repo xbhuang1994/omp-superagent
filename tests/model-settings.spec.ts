@@ -17,34 +17,39 @@ it('applies valid models, preserves panel choices on restart, and honors explici
     executor: { model: { provider: 'fixture', model: 'fixture' } } })
   let runtime = new Runtime(machineOf(settings), settings)
   const selected: RoleModel = { provider: 'fixture', model: 'fixture-two', thinkingLevel: 'low' }
+  const advisor: RoleModel = { provider: 'fixture', model: 'fixture-three', thinkingLevel: 'high' }
   try {
     await runtime.ready
     const available = await (await fetch(`${runtime.web.url}api/settings/models`)).json() as { available: { id: string }[] }
     expect(available.available.map(model => model.id)).toEqual(expect.arrayContaining(['fixture', 'fixture-two']))
     const response = await fetch(`${runtime.web.url}api/settings/models`, { method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ eval: selected, executor: selected }) })
+      body: JSON.stringify({ eval: selected, executor: selected, advisor }) })
     expect(response.status).toBe(200)
     expect(runtime.sessions.get(runtime.masterId)?.model?.id).toBe('fixture-two')
     expect(runtime.store.settings().eval.model).toEqual(selected)
     expect(runtime.store.settings().executor.model).toEqual(selected)
+    expect(runtime.store.settings().executor.advisor).toEqual(advisor)
 
     await runtime.stop()
     runtime = new Runtime(machineOf(settings), settings)
     await runtime.ready
     expect(runtime.store.settings().eval.model).toEqual(selected)
+    expect(runtime.store.settings().executor.advisor).toEqual(advisor)
     expect(runtime.sessions.get(runtime.masterId)?.model?.id).toBe('fixture-two')
 
     const invalid = await fetch(`${runtime.web.url}api/settings/models`, { method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ eval: { provider: 'fixture', model: 'missing' }, executor: selected }) })
+      body: JSON.stringify({ eval: selected, executor: selected, advisor: { provider: 'fixture', model: 'missing' } }) })
     expect(invalid.status).toBe(400)
-    expect(runtime.store.settings().eval.model).toEqual(selected)
+    expect(runtime.store.settings().executor.advisor).toEqual(advisor)
 
     await runtime.stop()
     settings.eval.model = { provider: 'fixture', model: 'fixture-three' }
+    settings.executor.advisor = null
     runtime = new Runtime(machineOf(settings), settings)
     await runtime.ready
     expect(runtime.store.settings().eval.model).toEqual(settings.eval.model)
     expect(runtime.store.settings().executor.model).toEqual(selected)
+    expect(runtime.store.settings().executor.advisor).toEqual(advisor)
   } finally {
     await runtime.stop()
     await provider.close()
