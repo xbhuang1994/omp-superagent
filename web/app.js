@@ -34,7 +34,6 @@ let workerDetailVersion = 0
 let workerDetailSnapshot = ''
 let refreshingWorkers = false
 let wechatState
-const rendered = new Set()
 let selected = []
 let pendingMessageId
 let followOutput = true
@@ -98,11 +97,8 @@ function appendFormatted(container, text) {
 }
 
 function render(messages) {
-  let added = false
+  transcript.replaceChildren()
   for (const message of messages) {
-    if (rendered.has(message.id)) continue
-    added = true
-    rendered.add(message.id)
     const article = document.createElement('article')
     article.className = `message ${message.role}`
     const meta = document.createElement('div')
@@ -156,8 +152,8 @@ function render(messages) {
     }
     transcript.append(article)
   }
-  empty.hidden = rendered.size > 0
-  if (added && followOutput) transcript.scrollTop = transcript.scrollHeight
+  empty.hidden = transcript.querySelector('.message.user, .message.assistant') !== null
+  if (followOutput) transcript.scrollTop = transcript.scrollHeight
 }
 
 async function refresh() {
@@ -442,7 +438,6 @@ resetSession.addEventListener('click', async () => {
     const response = await fetch('/api/session/reset', { method: 'POST' })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || `重置失败 (${response.status})`)
-    rendered.clear()
     transcript.replaceChildren()
     empty.hidden = false
     feedback.textContent = 'Session 已重置'

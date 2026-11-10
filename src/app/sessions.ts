@@ -252,12 +252,8 @@ export class OMPSessions {
     for (const [index, attachment] of attachments.entries()) {
       const data = Buffer.from(attachment.data, 'base64')
       const mediaType = imageType(attachment)
-      if (mediaType) {
-        images.push({ type: 'image', data: attachment.data, mimeType: mediaType })
-        metadata.push({ name: attachment.name, mediaType, kind: 'image' })
-        continue
-      }
-      const decoded = textContent(attachment, data)
+      if (mediaType) images.push({ type: 'image', data: attachment.data, mimeType: mediaType })
+      const decoded = mediaType ? undefined : textContent(attachment, data)
       if (decoded !== undefined) {
         rendered.push(`<attachment name="${attribute(attachment.name)}">\n${decoded}\n</attachment>`)
         metadata.push({ name: attachment.name, mediaType: attachment.mediaType || 'text/plain', kind: 'text' })
@@ -267,9 +263,9 @@ export class OMPSessions {
       await mkdir(directory, { recursive: true, mode: 0o700 })
       const path = join(directory, `${index + 1}-${attachment.name}`)
       await writeFile(path, data, { mode: 0o600 })
-      const storedType = attachment.mediaType || 'application/octet-stream'
+      const storedType = mediaType || attachment.mediaType || 'application/octet-stream'
       rendered.push(`<attachment name="${attribute(attachment.name)}" mediaType="${attribute(storedType)}" path="${attribute(path)}">\nFile saved at the path above. Use read or bash to inspect or transform it as needed; do not execute it implicitly.\n</attachment>`)
-      metadata.push({ name: attachment.name, mediaType: storedType, kind: 'file', path })
+      metadata.push({ name: attachment.name, mediaType: storedType, kind: mediaType ? 'image' : 'file', path })
     }
     const body = [text, ...rendered].filter(Boolean).join('\n\n') || '请查看附件。'
     const content: ChatContent = [{ type: 'text', text: body }, ...images]

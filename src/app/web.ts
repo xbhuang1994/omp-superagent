@@ -161,7 +161,9 @@ export class WebPanel {
       const text = messageText(message)
       if (!text) return []
       const source = message.role === 'custom' && message.details && typeof message.details === 'object' && 'source' in message.details ? message.details.source : undefined
-      const role = message.role === 'assistant' || source === 'chat-reply' ? 'assistant' : message.role === 'custom' && source !== 'web-panel' && source !== 'wechat' ? 'event' : 'user'
+      const visible = source === 'chat-reply' || message.role === 'custom' && (source === 'web-panel' || source === 'wechat')
+      if (!visible) return []
+      const role = source === 'chat-reply' ? 'assistant' : 'user'
       const at = 'timestamp' in message && typeof message.timestamp === 'number' ? message.timestamp : undefined
       const images = messageImages(message)
       const files = messageAttachments(message).filter(attachment => attachment.kind !== 'image')

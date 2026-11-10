@@ -7,7 +7,7 @@ import type { SourceKind } from './kind.ts'
 
 export const CHAT_SOURCE = 'chat'
 export const WEB_SENDER = 'web:local'
-const WEB_THREAD = 'web:main'
+export const WEB_THREAD = 'web:main'
 export interface ChatInput {
   surface: 'web' | 'wechat'
   messageId: string
@@ -61,6 +61,7 @@ export class ChatSource {
       return 'sent'
     }
     if (surface === 'wechat' && conversation === `wechat:${sender?.slice('wechat:'.length)}` && sender?.startsWith('wechat:')) {
+      await this.host.sessions.publish(this.host.masterId, `chat-reply:${message.id}`, message.text)
       return this.host.deliverWeChat(message.id, message.text, sender.slice('wechat:'.length))
     }
     return 'gone'

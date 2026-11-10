@@ -14,7 +14,7 @@ import { HealthBoard } from '../src/infra/health.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { startOmpOpenAIServer, writeFixtureModels, type OmpFixture } from './fixtures/omp-openai-server.ts'
 import { WeChatBridge } from '../src/app/wechat.ts'
-import { ChatSource } from '../src/sources/chat.ts'
+import { ChatSource, WEB_SENDER, WEB_THREAD } from '../src/sources/chat.ts'
 import { WorkerView } from '../src/app/workers.ts'
 import { ModelSettings } from '../src/app/model-settings.ts'
 
@@ -65,13 +65,16 @@ it('serves a secure static panel and persists a real OMP chat round trip', async
     body: JSON.stringify({ text: 'Hello panel' }) })
   expect(response.status).toBe(202)
   let messages: { role: string; text: string }[] = []
+  await vi.waitFor(() => { expect(server.requests).not.toHaveLength(0) })
+  await chat.send({ id: 'panel-reply', kind: 'reply', text: 'Panel reply',
+    channel: { source: 'chat', thread: WEB_THREAD, address: { surface: 'web', conversation: WEB_THREAD, sender: WEB_SENDER } } })
   await vi.waitFor(async () => {
     const result = await fetch(`${panel.url}api/messages`)
     messages = (await result.json()).messages
     expect(messages.some(message => message.role === 'assistant' && message.text === 'Panel reply')).toBe(true)
   })
   expect(messages.some(message => message.role === 'user' && message.text === 'Hello panel')).toBe(true)
-  expect(server.requests).not.toHaveLength(0)
+  expect(messages).toHaveLength(2)
 })
 
 it('rejects cross-origin posts and invalid input', async () => {
