@@ -12,7 +12,7 @@ import { key, said, type Decision, type Thread, type Ticket, type Trigger } from
  */
 const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ['A message attaches to a ticket only on an explicit pointer', 'dispatch',
-    ['Attach only when the message points at that ticket explicitly', 'A message on a similar subject is a new request: accept or ignore it, never attach it.']],
+    ['Outside a chat, attach only when the message points at that ticket explicitly', 'Outside a chat, a message on a similar subject is a new request: accept or ignore it, never attach it.']],
   ['An Executor drops an attached thread it finds unrelated, without replying there', 'work',
     ['call orchestrator_thread_unrelated with the thread key and a one-sentence reason; do not acknowledge it or reply there.']],
   ['A located element or a few CSS lines settle no design', 'team/scope',
@@ -133,7 +133,7 @@ it('shows a trigger and a ticket as cards with a short preview and references to
   const { policyVersion: _version, ...mandate } = ticket.mandate
   const threads = [{ thread: 'github:42', bound: true as const }]
   const batch = [{ ...trigger, id: 'request-2', text: 'Also the flaky one.' }]
-  expect(ticketDetails(ticket, threads, batch)).toEqual({ ticket_id: 'ticket-1', title: 'Inspect failing check',
+  expect(ticketDetails(ticket, threads, batch)).toEqual({ ticket_id: 'ticket-1', title: 'Inspect failing check', digest: expect.stringMatching(/^Inspect failing check: The focused check passed\./),
     state: 'person/review', strength: 'explicit', pr_number: 42, read: 'ticket/ticket-1', trigger_id: 'request-1', decision_id: 'd1',
     batch: [{ trigger_id: 'request-2', from: 'alice', at: trigger.at, preview: 'Also the flaky one.', read: 'trigger/request-2' }],
     threads, directory: '/worktrees/ticket-1', scope: mandate.scope, requested_by: 'alice', inputs: { items: [] },
@@ -168,6 +168,11 @@ it('shows a ticket card\'s state from a closed set: the open ticket\'s stage, th
   expect(ticketCard(ticket)).toMatchObject({ ticket_id: 'ticket-1', pr_number: 42, strength: 'explicit' })
   expect(ticketCard(ticket)).not.toHaveProperty('attention')
   expect(ticketCard({ ...ticket, attention: { id: 'q', question: 'Desktop too?' } })).toMatchObject({ attention: { question: 'Desktop too?' } })
+  // A chat message is matched on a ticket's subject: its topic, else the title and latest report; a drop only says a message was handed back.
+  const dropped = { ...ticket.assignments[0]!, report: { state: 'dropped' as const, summary: 'Asks for the cyclic-mesh intro; handed back.', at: '' } }
+  expect(ticketCard({ ...ticket, assignments: [ticket.assignments[0]!, dropped] }).digest).toMatch(/^Inspect failing check: The focused check passed\./)
+  expect(ticketCard({ ...ticket, assignments: [dropped] }).digest).toBe('Inspect failing check')
+  expect(ticketCard({ ...ticket, digest: 'Backtest report of bt20261005' }).digest).toBe('Backtest report of bt20261005')
 })
 it('shows a decision with snake_case keys and a reference to its details', () => {
   const decision: Decision = { id: 'd1', evalId: 'e1', threadKey: 'github:42', triggerIds: ['request-1'], policyVersion: 'v1', at: 'a', kind: 'accept', reason: [said('r')],

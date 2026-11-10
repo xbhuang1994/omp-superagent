@@ -34,7 +34,8 @@ function harness(policyOverrides: Partial<Policy> = {}, { emit, prepareTicket }:
     ...policyOverrides,
   }
   let clock = 0
-  const scope: EngineOptions['scope'] = { scope: t => t.meta.blocked ? { listened: false, reason: 'chat not allowed' } : { listened: true, observed: false } }
+  const scope: EngineOptions['scope'] = { scope: t => t.meta.blocked ? { listened: false, reason: 'chat not allowed' }
+    : t.meta.routed ? { listened: true, observed: false, fanout: false } : { listened: true, observed: false } }
   const queued: EngineOptions['outbox'] = {
     send: message => { if (!outbox.some(item => item.id === message.id)) outbox.push(message) },
     status: id => outbox.some(item => item.id === id) ? 'pending' : undefined,
@@ -202,6 +203,40 @@ describe('subscription fan-out', () => {
     // A bot's message there still goes to Eval, which the gate does not admit.
     h.engine.receive(trigger('3', { human: false })); h.pump()
     expect(h.repo.decisions.byThread('chat:t1').at(-1)).toMatchObject({ kind: 'ignore', triggerIds: ['3'] })
+  })
+  it('keeps a message of a Source without fan-out from every subscribed ticket, and delivers it only to the ticket attached', () => {
+    const h = harness()
+    const first = accepted(h).ticketId!, second = accepted(h, '2', 't2').ticketId!
+    h.engine.receive(trigger('3', { meta: { routed: true } })); h.pump()
+    expect(h.repo.triggers.disposition('3')).toMatchObject({ fanout: [] })
+    expect(h.repo.tickets.get(first)!.inputs).toEqual([])
+    // It went to Eval as a candidate, with the ticket still subscribed to the Thread for the card's related tickets.
+    expect(h.requests.at(-1)!.triggers.map(item => item.id)).toEqual(['3'])
+    expect(h.repo.threads.get('chat:t1')!.subscriptions).toEqual([first])
+    h.engine.attach(second, '3'); h.settle()
+    expect(h.repo.tickets.get(first)!.inputs).toEqual([])
+    expect(h.repo.tickets.get(second)!.inputs).toEqual([expect.objectContaining({ kind: 'trigger', triggerId: '3' })])
+    // The worker's topic becomes the ticket's digest for routing.
+    h.engine.report(second, { state: 'progress', summary: 'Working', topic: 'Backtest check of bt20261005' })
+    expect(h.repo.tickets.get(second)!.digest).toBe('Backtest check of bt20261005')
+    h.engine.report(second, { state: 'progress', summary: 'Still working' })
+    expect(h.repo.tickets.get(second)!.digest).toBe('Backtest check of bt20261005')
+    // A drop only hands a message back, so it cannot change what the ticket is about.
+    h.engine.report(second, { state: 'dropped', summary: 'Handed back', topic: 'The cyclic-mesh intro' })
+    expect(h.repo.tickets.get(second)!.digest).toBe('Backtest check of bt20261005')
+  })
+  it('lets the main Session answer a message of a Source without fan-out that reached no ticket, though tickets follow its Thread', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const chatter = trigger('2', { meta: { routed: true } })
+    h.engine.receive(chatter); h.pump()
+    expect(h.engine.reply({ purpose: 'answer', triggerId: '2', text: 'Hi' })).toMatchObject({ status: 'pending', reused: false })
+    expect(h.outbox.at(-1)).toMatchObject({ channel: chatter.channel, text: 'Hi', kind: 'reply' })
+    expect(h.outbox.at(-1)).not.toHaveProperty('ticketId')
+    // Once attached, the message is the ticket's, and only its worker's answer may be sent.
+    h.engine.receive(trigger('3', { meta: { routed: true } })); h.pump()
+    h.engine.attach(ticketId, '3'); h.settle()
+    expect(() => h.engine.reply({ purpose: 'answer', triggerId: '3', text: 'Yes' })).toThrow(new UserError('noAnswer'))
   })
   it('keeps inputs undelivered until an assignment is running, and asks to launch one whose launch failed again', () => {
     const h = harness()

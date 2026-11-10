@@ -26,6 +26,11 @@ const SESSION_SETTINGS = {
   'retry.enabled': true,
   'compaction.enabled': true,
 } as const
+/**
+ * The orchestrator's context window is far larger than routing needs, and every candidate resends its whole history: compact
+ * it early. Routing facts come from the store in each card, so a summary loses nothing a decision needs.
+ */
+const ORCHESTRATOR_SETTINGS = { ...SESSION_SETTINGS, 'compaction.thresholdTokens': 60_000, 'compaction.keepRecentTokens': 8_000 } as const
 export interface ChatAttachment { name: string; mediaType: string; data: string }
 type ChatContent = string | (TextContent | ImageContent)[]
 interface AttachmentMetadata { name: string; mediaType: string; kind: 'image' | 'text' | 'file'; path?: string }
@@ -182,7 +187,7 @@ export class OMPSessions {
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
       agentRegistry: new AgentRegistry(),
-      settings: Settings.isolated(SESSION_SETTINGS),
+      settings: Settings.isolated(role === 'orchestrator' ? ORCHESTRATOR_SETTINGS : SESSION_SETTINGS),
       sessionManager,
       customSystemPrompt,
       noContextFiles: role === 'orchestrator',
@@ -229,13 +234,14 @@ export class OMPSessions {
     })
   }
 
+  /** `inputs` names the Inputs the message carries when it is not the one Input whose id is `requestId`. */
   async prompt(sessionId: string, requestId: string, text: string, mode: 'queue' | 'steer' | { inject: string },
-    authorize?: () => void, accepted?: () => void): Promise<void> {
+    authorize?: () => void, accepted?: () => void, inputs?: string[]): Promise<void> {
     const session = this.loaded.get(sessionId)
     if (!session) throw new Error(`OMP Session is not loaded: ${sessionId}`)
     const ticketId = sessionId.startsWith('worker-') ? sessionId.slice('worker-'.length) : undefined
     const ticket = ticketId ? this.host.store.tickets.get(ticketId) : undefined
-    const inputIds = ticket?.inputs.some(input => input.id === requestId) ? [requestId] : undefined
+    const inputIds = inputs ?? (ticket?.inputs.some(input => input.id === requestId) ? [requestId] : undefined)
     this.bind(session, ticketId)
     await this.delivery.send(session, requestId, text, mode, this.host.lifetime, inputIds, authorize, accepted)
   }

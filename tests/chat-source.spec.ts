@@ -7,7 +7,7 @@ import { Runtime } from '../src/app/runtime.ts'
 import { Config, machineOf } from '../src/deployment.ts'
 import { WEB_SENDER } from '../src/sources/chat.ts'
 import type { ChatReceipt } from '../src/sources/chat.ts'
-import { startOmpOpenAIServer, writeFixtureModels } from './fixtures/omp-openai-server.ts'
+import { coreReply, incomingText, jsonText, startOmpOpenAIServer, writeFixtureModels } from './fixtures/omp-openai-server.ts'
 
 vi.setConfig({ testTimeout: 30_000 })
 function config(dir: string, allowed = true) {
@@ -25,7 +25,15 @@ async function post(runtime: Runtime, text: string, messageId: string): Promise<
 
 it('runs chat requests through candidates, tickets and durable replies across restart', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'omp-chat-source-'))
-  const provider = await startOmpOpenAIServer()
+  let ticketId = ''
+  const provider = await startOmpOpenAIServer(request => {
+    const incoming = incomingText(request)
+    const worker = request.tools?.some(tool => tool.function?.name === 'orchestrator_report')
+    // A chat message reaches no worker by itself: the main Session attaches the follow-up to the one ticket it continues.
+    if (!worker && incoming.includes('补充：保留现有回测口径')) return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'attach',
+      trigger_id: String(jsonText(incoming)?.trigger_id), ticket_id: ticketId, note: 'Follows the backtest check' }] } }] }
+    return coreReply(request)
+  })
   await writeFixtureModels(join(dir, 'omp'), provider.baseUrl)
   const settings = config(dir)
   let runtime = new Runtime(machineOf(settings), settings)
@@ -36,6 +44,7 @@ it('runs chat requests through candidates, tickets and durable replies across re
     expect(receipt.result).toBe('stored')
     await vi.waitFor(() => { expect(runtime.store.tickets.list()).toHaveLength(1) })
     const ticket = runtime.store.tickets.list()[0]!
+    ticketId = ticket.id
     expect(ticket).toMatchObject({ origin: { triggerId: receipt.triggerId }, mandate: { strength: 'explicit', actor: { source: 'chat', id: WEB_SENDER } } })
     expect(ticket.channels[0]).toMatchObject({ source: 'chat', thread: 'web:main', address: { surface: 'web', conversation: 'web:main', sender: WEB_SENDER } })
     const candidateMessage = runtime.sessions.get(runtime.masterId)?.messages.find(message => message.role === 'custom'
@@ -59,14 +68,11 @@ it('runs chat requests through candidates, tickets and durable replies across re
     })
     expect(runtime.store.tickets.list()).toHaveLength(1)
 
+    // An unrelated request is new work: it reaches no existing worker, so none has to hand it back.
     const independent = await post(runtime, '独立检查另一个工程', 'web:independent-1')
     expect(independent.triggerId).not.toBe(receipt.triggerId)
-    await vi.waitFor(() => {
-      expect(runtime.store.tickets.get(ticket.id)?.inputs.some(input => input.kind === 'trigger' && input.triggerId === independent.triggerId)).toBe(true)
-    })
-    runtime.engine.handback(ticket.id, independent.triggerId, 'Independent request outside this ticket')
-    await runtime.pump()
     await vi.waitFor(() => { expect(runtime.store.tickets.list()).toHaveLength(2) })
+    expect(runtime.store.tickets.get(ticket.id)?.inputs.some(input => input.kind === 'trigger' && input.triggerId === independent.triggerId)).toBe(false)
     const second = runtime.store.tickets.list().find(item => item.origin.triggerId === independent.triggerId)
     expect(second?.channels[0]?.thread).toBe('web:main')
 
@@ -162,6 +168,9 @@ it('answers a no-work voice follow-up through the existing answer pipeline', asy
       } }] }
       return { toolCalls: [{ name: 'orchestrator_reply', arguments: { ticket_id: ticketId, purpose: 'result', text: 'Initial work completed.' } }] }
     }
+    // Only the candidate itself: the system prompt also names speech transcripts.
+    if (latest.includes('语音转写')) return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'attach',
+      trigger_id: String(jsonText(incomingText(request))?.trigger_id), ticket_id: ticketId }] } }] }
     return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'accept', trigger_id: triggerId,
       title: 'Voice follow-up fixture', worktree_name: 'voice-followup-fixture', acknowledgement: 'Starting fixture.' }] } }] }
   })
@@ -184,6 +193,12 @@ it('answers a no-work voice follow-up through the existing answer pipeline', asy
       expect(runtime.store.receipts.get(key('reply', followupId, '好的，知道了。'))?.status).toBe('sent')
     })
     expect(runtime.store.tickets.list()).toHaveLength(1)
+    // The resumed worker's first turn carries the message that resumed it: on the bare restart it would judge the ticket done without it.
+    const resumedTurn = provider.requests.find(request => request.tools?.some(tool => tool.function?.name === 'orchestrator_report')
+      && JSON.stringify(request.messages).includes('assignment\\":2'))
+    expect(resumedTurn).toBeDefined()
+    expect(JSON.stringify(resumedTurn!.messages)).toContain('This ticket ended earlier')
+    expect(JSON.stringify(resumedTurn!.messages)).toContain(followupId)
   } finally {
     await runtime.stop()
     await provider.close()

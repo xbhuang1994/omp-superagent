@@ -6,6 +6,8 @@ The standalone service keeps the domain chain: GitHub or chat Trigger â†’ Eval â
 
 One persistent OMP orchestrator routes and assesses. Each Ticket has one persistent OMP worker in its own directory. Application tools call `Engine`; workers report through durable relay Effects; `Outbox` posts through GitHub or the originating chat conversation. No Cordis service, Feishu adapter, worker subagent manager or async background-job host exists.
 
+Chat Threads are subscribed but not fanned out (`ScopeResult.fanout: false`): a chat message reaches no worker by itself and goes to Eval as a candidate, so one orchestrator turn picks the ticket and attaches it; only that worker runs. A chat card lists up to 20 tickets in the compact `routingCard` form: `title`, `asked` (the start of the request the ticket was accepted from), `digest` (the worker's latest `orchestrator_report` `topic`, else its latest report that was not a drop), `state` and `updated`. A worker that hands the message back returns it as `handed_back`; once three tickets have, the card tells the orchestrator to accept it as new work. The main Session answers chatter itself: a message reaches a ticket only as its origin or an Input, never by its Thread alone.
+
 ```mermaid
 flowchart LR
   gh[GitHub watcher] --> engine[Engine]

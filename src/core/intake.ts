@@ -35,7 +35,7 @@ export class Intake extends EnginePart {
       const thread = this.thread(ref)
       if (!thread.lastAt || trigger.at > thread.lastAt) thread.lastAt = trigger.at
       thread.correlated = [...new Set([...thread.correlated, ...keys.filter(other => other !== thread.key)])]
-      for (const ticketId of thread.subscriptions) {
+      for (const ticketId of filter.fanout === false ? [] : thread.subscriptions) {
         const ticket = this.repo.tickets.get(ticketId)
         // Only a person's message on a non-context thread resumes an ended ticket; bots and CI do not (the Executor re-reads
         // threads when it resumes), and a human-stopped ticket receives nothing because its Mandate was withdrawn.

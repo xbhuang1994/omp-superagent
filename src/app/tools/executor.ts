@@ -10,6 +10,8 @@ import { reportRelay, threadFollowedNotice } from '../notices.ts'
 import type { OMPSessions } from '../sessions.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 
+/** Longest topic a ticket keeps; a longer one is cut, not refused. */
+const TOPIC_CHARS = 200
 export interface ExecutorToolsHost {
   readonly engine: Pick<EngineForExecutor, 'report' | 'reply' | 'markUnrelated' | 'handback' | 'followForContext'>
   readonly store: Pick<Store, 'tickets' | 'replyStatus' | 'atomic'>
@@ -81,6 +83,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe('The ticket\'s source PR, or a PR from the branch named after this ticket (OMP_SUPERAGENT_NAME); requires GitHub configuration.'),
         reply_to_trigger_id: z.string().optional().describe('The human message this report answers, including a no-work acknowledgement; never for routine progress.'),
+        // Never refuse a report for a long topic: the report may carry an answer that must reach the person.
+        topic: z.string().trim().min(1).optional().describe(`What this ticket is about, in one or two sentences of at most ${TOPIC_CHARS} characters: the subject, the files or area it touches and where it stands; the orchestrator routes later messages to tickets by it. Send it with the first report and whenever it changes.`),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
@@ -93,7 +97,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           const refused = pull && claimPull(github!, ticketId, pull)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
-            ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
+            ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}), ...(args.topic ? { topic: args.topic.slice(0, TOPIC_CHARS) } : {}) }
           const updated = host.engine.report(ticketId, report)
           const relay = reportRelay(updated, report)
           if (relay) host.sessions.relay(relay.id, relay.text)

@@ -19,6 +19,8 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 
 Every message on a subscribed Thread reaches its subscribed Tickets as context, including messages from bots and CI. This delivery bypasses the gate and grants no new authority. Each Ticket remains limited by its Mandate.
 
+A Source may opt out of fan-out, as chat does: one conversation carries many unrelated Tickets, and fanning every message out would wake each of their Executors. Its Threads stay subscribed, so candidate cards still list their Tickets, but each message goes to Eval. The main Session attaches it to the one Ticket it follows on from, which then owns it as above, accepts it as new work, or ignores and answers plain conversation itself. Such a message belongs to a Ticket only as that Ticket's origin or Input, never by its Thread alone, so the main Session's direct answer needs no Executor's permission. Once three Tickets have handed one message back, its card tells the main Session to accept it as new work.
+
 A person's message on a Ticket's own Thread belongs to that Ticket's Executor to decide. The same applies when the main Session attaches a message to a Ticket. While an Executor owns the message, it takes no Eval and gets no Decision. Each Executor either handles the request within its Ticket's scope or hands it back for routing elsewhere.
 
 Ownership continues while the Ticket is live, even if a person removes its Subscription. It also covers an ended Ticket that was not stopped by a person and has the message waiting to resume it.

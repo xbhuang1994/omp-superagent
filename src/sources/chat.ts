@@ -76,6 +76,7 @@ export class ChatSource {
       schema: z.object({}).strict(),
       fields: [], health: [],
       channel: { send: (_host, message) => this.send(message), link: () => ({ url: '', label: { zh: '当前聊天', en: 'Current chat' } }) },
+      scope: () => ({ listened: true, observed: false, fanout: false }),
       policy: {
         schema: z.object({ allowed: z.array(z.object({ id: z.string().regex(/^(?:web:local|wechat:.+)$/) }).strict()).default([]) }).strict(),
         fields: [{ key: 'allowed', type: 'rows', label: { zh: '能发起工作的聊天发送者', en: 'Chat senders who may originate work' },

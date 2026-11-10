@@ -23,13 +23,33 @@ function cardState(ticket: Ticket): TicketCardState {
   if (stage.stage === 'person') return `person/${stage.action}`
   return stage.stage === 'idle' ? 'idle' : stage.stage === 'working' && stage.action ? 'working/queued' : 'working'
 }
+/** The worker's topic, else its latest report that was not a drop, which only says it handed a message back. */
+function subjectOf(ticket: Ticket): string | undefined {
+  return ticket.digest ?? ticket.assignments.findLast(item => item.report && item.report.state !== 'dropped')?.report?.summary
+}
+/** What a message is matched against: the worker's topic, else the title with its latest report that was not a drop. */
+function digestOf(ticket: Ticket): string {
+  if (ticket.digest) return ticket.digest
+  const subject = subjectOf(ticket)
+  return preview(subject ? `${ticket.title}: ${subject}` : ticket.title)
+}
 export function ticketCard(ticket: Ticket) {
   const ended = ticket.ended && { at: ticket.ended.at, by: ticket.ended.by, reason: ticket.ended.reason ?? ticket.ended.outcome }
   const { attention } = ticket
-  return { ticket_id: ticket.id, title: ticket.title, state: cardState(ticket), strength: ticket.mandate.strength,
+  return { ticket_id: ticket.id, title: ticket.title, digest: digestOf(ticket), state: cardState(ticket), strength: ticket.mandate.strength,
     ...(pullOf(ticket) ? { pr_number: pullOf(ticket) } : {}), ...(ended ? { ended } : {}),
     ...(attention ? { attention: { question: attention.question, ...attention.triggerId ? { trigger_id: attention.triggerId } : {} } } : {}),
     preview: preview(latestReport(ticket)?.summary ?? ''), read: `ticket/${ticket.id}` }
+}
+/**
+ * A chat candidate's compact ticket card: what routing a message needs. `asked` is the start of the request it was accepted
+ * from, which holds the paths and names a title leaves out; the digest leaves out the title the card already shows.
+ */
+export function routingCard(ticket: Ticket, asked?: string) {
+  const { attention } = ticket
+  const subject = subjectOf(ticket)
+  return { ticket_id: ticket.id, title: ticket.title, ...asked ? { asked: preview(asked).slice(0, 100) } : {}, ...subject ? { digest: preview(subject) } : {},
+    state: cardState(ticket), updated: ticket.updatedAt.slice(0, 16), ...(attention ? { attention: { question: attention.question } } : {}) }
 }
 /** Strips `policyVersion`, an internal hash that callers never query by. */
 const mandateOf = ({ policyVersion: _version, ...mandate }: Mandate) => mandate
@@ -90,7 +110,7 @@ export function textPage(resource: string, text: string, offset: number, limit: 
   const end = Math.min(text.length, offset + limit)
   return { resource, offset, total_chars: text.length, next_offset: end < text.length ? end : null, text: text.slice(offset, end) }
 }
-export function relatedTickets(tickets: readonly Ticket[]) {
+export function relatedTickets(tickets: readonly Ticket[], limit = 8, card: (ticket: Ticket) => object = ticketCard) {
   const order = [...tickets].sort((a, b) => Number(!a.ended) === Number(!b.ended) ? b.createdAt.localeCompare(a.createdAt) : a.ended ? 1 : -1)
-  return { related_tickets: order.slice(0, 8).map(ticketCard), tickets_total: tickets.length }
+  return { related_tickets: order.slice(0, limit).map(card), tickets_total: tickets.length }
 }

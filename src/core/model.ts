@@ -297,6 +297,8 @@ export interface Ticket {
   follows?: Follow[]
   /** People's questions the worker answered, whose answers the main Session may send. */
   answers?: string[]
+  /** A short description of what the ticket is about, kept current by its worker's reports; the main Session routes follow-up messages by it. */
+  digest?: string
   createdAt: string
   updatedAt: string
   /** The Triggers it was accepted from: the one that started it, and the batch its Eval held. */

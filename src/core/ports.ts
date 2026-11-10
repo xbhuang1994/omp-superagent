@@ -6,8 +6,11 @@ import type { Reason } from './reasons.ts'
 /** Gate admission result: either inadmissible with a reason code, or admissible with strength and MandateBasis. */
 export type GateResult = { admissible: false; reason: string } | { admissible: true; strength: Strength; basis: MandateBasis }
 
-/** Whether a Source receives a Trigger; `observed` when it also receives messages not addressed to the agent, and `row` the receiving scope the Policy's admission table names, such as a chat. */
-export type ScopeResult = { listened: true; observed: boolean; row?: string } | { listened: false; reason: string }
+/**
+ * Whether a Source receives a Trigger; `observed` when it also receives messages not addressed to the agent, and `row` the receiving scope the Policy's admission table names, such as a chat.
+ * `fanout: false` keeps the Source's Threads subscribed (for routing cards and views) but sends none of their Triggers to subscribed tickets: the main Session routes each one to a single ticket.
+ */
+export type ScopeResult = { listened: true; observed: boolean; row?: string; fanout?: false } | { listened: false; reason: string }
 /** Source configuration as the domain sees it: listening scope per trigger or per recorded Mandate basis. */
 export interface SourceScope {
   scope(input: { source: string; meta: Record<string, unknown> }): ScopeResult

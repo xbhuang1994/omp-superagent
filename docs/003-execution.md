@@ -6,6 +6,8 @@ An accepted Ticket owns its Mandate, workspace and persistent OMP worker. `OMPEx
 
 Every subsequent Input uses the Ticket's single durable delivery Effect. Before each send, the Executor rereads Ticket/Assignment and stops if either ended or was replaced. The custom entry and `flushToDisk()` complete before delivered/read commits. `agent_start` alone occupies a running slot; launch/ensure/send failure releases its reservation. `maxWorkers` caps workers, wakes take priority, and a person's follow-up may use one extra slot.
 
+A resumed Assignment's first message carries the marker and the message that resumed it, after the restart JSON, and confirms both Inputs delivered at once: a worker that restarted on the bare marker could judge the ticket done and report `dropped` before the message arrived, ending the ticket with the message unread.
+
 Only terminal `agent_end` completes a turn. Intermediate retry/compaction/async ends do not. OMP handles model retries; the Executor has no second retry loop. A ready/attention/blocked/failed report is already a handoff. Otherwise the Executor writes `waiting` with the final assistant text and relays it. Final assistant error becomes `failed`.
 
 ## Stop and recovery

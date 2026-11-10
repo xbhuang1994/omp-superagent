@@ -17,6 +17,8 @@ export interface WorkerReport {
   askedBy?: string
   /** The person's question this report answers, which the worker thereby takes up; authorizes the main Session to send an answer reply. */
   answers?: string
+  /** What the ticket is about now, in a sentence or two; replaces the ticket's `digest`. */
+  topic?: string
 }
 const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the current worktree, git history and GitHub state before continuing. Do not repeat an already completed external operation. Finish the original assignment and report its status.'
 
@@ -120,6 +122,8 @@ export class Assignments extends EnginePart {
     // A replaced or cleared attention question withdraws any pending unsent reply for the previous question from the outbox.
     if (previous && previous.id !== attention?.id) this.replies.withdrawAttention(previous.id)
     assignment.report = { state: report.state, summary: report.summary, at }
+    // A drop only hands a message back or says nothing is left; it never says what the ticket is about now.
+    if (report.topic && report.state !== 'dropped') ticket.digest = report.topic
     ticket.updatedAt = at
     if (report.answers && !ticket.answers?.includes(report.answers)) ticket.answers = [...ticket.answers ?? [], report.answers]
     if (report.answers) this.takeUp(ticketId, report.answers)

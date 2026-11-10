@@ -66,8 +66,10 @@ export class Replies extends EnginePart {
     if (request.triggerId && !trigger) throw new UserError('unknownTrigger')
     // A hand-back returns the message to the orchestrator; it no longer waits for that ticket's worker to answer it.
     const returned = new Set(trigger ? this.repo.triggers.disposition(trigger.id)?.handbacks?.map(item => item.ticketId) : undefined)
+    // The ticket a message went to, as its origin or an Input; a Source without fan-out reaches no ticket by its Thread alone.
     const ticket = request.ticketId ? this.require(request.ticketId)
-      : trigger ? this.repo.tickets.list().find(item => this.reaches(item, trigger) && !returned.has(item.id)) : undefined
+      : trigger ? this.repo.tickets.list().find(item => !returned.has(item.id) && (item.origin.triggerIds.includes(trigger.id)
+        || item.inputs.some(input => input.kind === 'trigger' && input.triggerId === trigger.id))) : undefined
     if (request.purpose === 'result') {
       const outcome = ticket && ticketOutcome(ticket)
       const reported = !!ticket && liveTicket(ticket) && latestAssignment(ticket)?.report?.state === 'ready'

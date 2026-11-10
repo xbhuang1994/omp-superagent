@@ -2,7 +2,7 @@
 
 ## Roles and isolation
 
-`OMPSessions` owns shared `AuthStorage` and `ModelRegistry`, while every Session gets a private `AgentRegistry` and isolated Settings. Async execution, automatic bash backgrounding and launch are disabled; retry and compaction stay enabled. MCP, LSP and extension discovery are off.
+`OMPSessions` owns shared `AuthStorage` and `ModelRegistry`, while every Session gets a private `AgentRegistry` and isolated Settings. Async execution, automatic bash backgrounding and launch are disabled; retry and compaction stay enabled. The orchestrator compacts at 60k tokens, keeping 8k recent: every candidate resends its whole history, and routing facts come from the store in each card, so its window would otherwise grow toward the model's limit.
 
 The orchestrator gets only application tools and no repository context files. A worker gets `read`, `bash`, `edit`, `write`, application tools, its Ticket mandate and the packaged GitHub skill. It retains repository `AGENTS.md`. A restricted extension checks Ticket liveness before every built-in or custom tool call.
 
