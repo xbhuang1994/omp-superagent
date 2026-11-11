@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -199,6 +199,61 @@ it('answers a no-work voice follow-up through the existing answer pipeline', asy
     expect(resumedTurn).toBeDefined()
     expect(JSON.stringify(resumedTurn!.messages)).toContain('This ticket ended earlier')
     expect(JSON.stringify(resumedTurn!.messages)).toContain(followupId)
+  } finally {
+    await runtime.stop()
+    await provider.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it('wakes a paused worker when its background bash job finishes and delivers the result reply promptly', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omp-chat-long-job-'))
+  let triggerId = '', ticketId = ''
+  let firstWorkerCallAssignmentState: string | undefined
+  const provider = await startOmpOpenAIServer(request => {
+    const worker = request.tools?.some(tool => tool.function?.name === 'orchestrator_report')
+    const incoming = incomingText(request)
+    const allText = JSON.stringify(request.messages)
+    if (worker) {
+      firstWorkerCallAssignmentState ??= runtime.store.tickets.list()[0]?.assignments[0]?.state
+      if (allText.includes('"reported":true')) return { content: 'Done.' }
+      if (allText.includes('BACKTEST_FINISHED_42')) {
+        return { toolCalls: [{ name: 'orchestrator_report', arguments: { state: 'ready', summary: 'Backtest finished: BACKTEST_FINISHED_42' } }] }
+      }
+      if (request.messages.at(-1)?.role === 'tool') return { content: 'Waiting for background backtest.' }
+      return { toolCalls: [{ name: 'bash', arguments: { command: 'until [ -f finish.flag ]; do sleep 0.05; done && printf "%s_%s\\n" BACKTEST FINISHED_42', async: true } }] }
+    }
+    if (request.messages.at(-1)?.role === 'tool') return { content: 'Done.' }
+    if (incoming.includes('worker_report')) {
+      return { toolCalls: [{ name: 'orchestrator_reply', arguments: { ticket_id: ticketId, purpose: 'result', text: '回测已完成：BACKTEST_OK' } }] }
+    }
+    return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'accept', trigger_id: triggerId,
+      title: 'Run long backtest', worktree_name: 'run-long-backtest', acknowledgement: '开始运行回测。' }] } }] }
+  })
+  await writeFixtureModels(join(dir, 'omp'), provider.baseUrl)
+  const settings = config(dir)
+  const runtime = new Runtime(machineOf(settings), settings)
+  try {
+    await runtime.ready
+    triggerId = (await post(runtime, '运行长回测任务', 'web:long-job-1')).triggerId
+    await vi.waitFor(() => { expect(runtime.store.tickets.list()).toHaveLength(1) })
+    ticketId = runtime.store.tickets.list()[0]!.id
+    await vi.waitFor(() => {
+      const session = runtime.sessions.get(`worker-${ticketId}`)
+      expect(session?.isStreaming).toBe(false)
+      expect(session?.asyncJobManager?.getRunningJobs()).toHaveLength(1)
+    })
+    expect(firstWorkerCallAssignmentState).toBe('running')
+    expect(runtime.executor.activeCount()).toBe(1)
+    expect(runtime.store.tickets.get(ticketId)?.assignments[0]?.report).toBeUndefined()
+
+    const workDir = runtime.store.tickets.get(ticketId)!.execution!.directory
+    writeFileSync(join(workDir, 'finish.flag'), '1\n')
+    await vi.waitFor(async () => {
+      const view = await (await fetch(`${runtime.web.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
+      expect(view.messages.some(message => message.role === 'assistant' && message.text === '回测已完成：BACKTEST_OK')).toBe(true)
+    }, { timeout: 15_000 })
+    expect(runtime.store.tickets.get(ticketId)?.ended?.outcome).toBe('completed')
   } finally {
     await runtime.stop()
     await provider.close()

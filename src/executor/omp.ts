@@ -2,7 +2,7 @@
 import { MAIN_AGENT_ID, type AgentSession } from '@oh-my-pi/pi-coding-agent'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { key, latestAssignment, latestReport, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
+import { key, latestAssignment, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
 import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Executor, Mandate, PolicyEffect, Ticket, TicketInput, Trigger }
   from '../core/index.ts'
 import type { Machine } from '../deployment.ts'
@@ -19,8 +19,16 @@ import type { HealthEntry } from '../infra/health.ts'
 export const workerSessionId = (ticketId: string): string => `worker-${ticketId}`
 export const ticketOfSession = (sessionId: string): string | undefined => sessionId.startsWith('worker-') ? sessionId.slice('worker-'.length) : undefined
 const PREPARE_TIMEOUT_MS = 10 * 60_000
-/** How long a worker's background work may run on after its turn ends before its shell jobs stop and it is reported waiting. */
-const BACKGROUND_LIMIT_MS = 30 * 60_000
+export interface WorkerJobInfo {
+  id: string
+  type: 'bash' | 'task' | 'eval'
+  label: string
+  startedAt: string
+  elapsedSeconds: number
+  progress?: string
+  command?: string
+  pids?: readonly number[]
+}
 const fromPerson = (input?: TicketInput): boolean => input?.kind === 'trigger' ? !!input.human && !input.context : input?.kind === 'text'
 /** Workspace prepare failure, which must not be retried automatically. */
 class PrepareFailed extends Error {}
@@ -115,12 +123,12 @@ function resumeInputs(ticket: Ticket): { marker: TicketInput; trigger: TicketInp
   return trigger && { marker, trigger }
 }
 
-/** Whether the worker's last word hands the ticket to a person: blocked or failed, or ready or a question with no Input since. */
+/** Whether the running Assignment's last word hands the ticket to a person: blocked or failed without a newer human message, or ready or a question with no Input since. */
 function handedOff(ticket: Ticket): boolean {
-  const report = latestReport(ticket)
   const assignment = runningAssignment(ticket)
+  const report = assignment?.report
   if (!report || !assignment) return false
-  if (report.state === 'blocked' || report.state === 'failed') return true
+  if (report.state === 'blocked' || report.state === 'failed') return waitsForPerson(ticket)
   const quiet = !assignment.deliveredAt || assignment.deliveredAt < report.at
   return quiet && (report.state === 'ready' || !!ticket.attention)
 }
@@ -145,13 +153,12 @@ export class WorkerSlots {
 /** Executes assignments through OMP terminal events; model retries belong exclusively to OMP. */
 export class OMPExecutor implements Executor {
   private readonly runningTickets = new Set<string>()
-  private readonly subscriptions = new Map<string, () => void>()
+  private readonly subscriptions = new Map<string, { session: AgentSession; unsubscribe: () => void }>()
   private readonly unloadAfterEnd = new Set<string>()
   private readonly stopping = new Map<string, Promise<void>>()
-  /** The background-work limit of workers whose turn ended while their jobs or subagents run, by ticket. */
-  private readonly limits = new Map<string, NodeJS.Timeout>()
   /** Shell jobs a worker left to a person at a handoff, by ticket: they run until the Assignment ends and wake no one. */
   private readonly left = new Map<string, Set<string>>()
+  private wakeSeq = 0
   private readonly slots: WorkerSlots
 
   constructor(private readonly host: ExecutorHost) {
@@ -216,7 +223,9 @@ export class OMPExecutor implements Executor {
         }
         const input = ticket.inputs.find(item => item.id === inputId)
         try {
-          if (!this.host.sessions.get(sessionId)) await this.host.sessions.ensure(sessionId, ticket.execution?.directory ?? '', ticket.title, 'worker', ticket)
+          const session = this.host.sessions.get(sessionId)
+            ?? await this.host.sessions.ensure(sessionId, ticket.execution?.directory ?? '', ticket.title, 'worker', ticket)
+          this.observe(session, ticketId)
           if (input) await this.deliverInput(ticket, assignment, input)
         } catch (error) {
           if (this.host.closing() || error instanceof Later) throw error
@@ -258,7 +267,7 @@ export class OMPExecutor implements Executor {
   }
 
   stop(ticket: Ticket, assignment: Assignment, reason: string): void {
-    const report = latestReport(ticket)
+    const report = assignment.report
     const busy = !!assignment.deliveredAt && !!report && assignment.deliveredAt >= report.at
     const ownTurn = (report?.state === 'ready' || report?.state === 'dropped') && !busy && !ticket.undelivered.length
     this.host.store.afterCommit(() => {
@@ -268,12 +277,18 @@ export class OMPExecutor implements Executor {
       }
       this.unloadAfterEnd.delete(ticket.id)
       this.runningTickets.delete(ticket.id)
-      this.clearBackground(ticket.id)
-      const stopping = this.host.sessions.stop(workerSessionId(ticket.id), reason)
-      this.stopping.set(ticket.id, stopping)
-      void stopping.catch((error: unknown) => this.host.health.set({ state: 'error', detail: String(error), at: new Date().toISOString() }))
-        .finally(() => { if (this.stopping.get(ticket.id) === stopping) this.stopping.delete(ticket.id) })
+      this.left.delete(ticket.id)
+      this.stopSession(ticket.id, reason)
     })
+  }
+
+  private stopSession(ticketId: string, reason: string): void {
+    this.subscriptions.get(ticketId)?.unsubscribe()
+    this.subscriptions.delete(ticketId)
+    const stopping = this.host.sessions.stop(workerSessionId(ticketId), reason)
+    this.stopping.set(ticketId, stopping)
+    void stopping.catch((error: unknown) => this.host.health.set({ state: 'error', detail: String(error), at: new Date().toISOString() }))
+      .finally(() => { if (this.stopping.get(ticketId) === stopping) this.stopping.delete(ticketId) })
   }
 
   private async stopped(ticketId: string): Promise<void> { await this.stopping.get(ticketId) }
@@ -292,37 +307,39 @@ export class OMPExecutor implements Executor {
   }
 
   private observe(session: AgentSession, ticketId: string): void {
-    this.subscriptions.get(ticketId)?.()
+    const existing = this.subscriptions.get(ticketId)
+    if (existing?.session === session) return
+    existing?.unsubscribe()
     const unsubscribe = session.subscribe(event => {
       if (event.type === 'agent_start') {
         this.runningTickets.add(ticketId)
-        clearTimeout(this.limits.get(ticketId))
-        this.limits.delete(ticketId)
         return
       }
       if (event.type !== 'agent_end') return
       if (event.isTerminal !== false) this.turnOver(ticketId, session)
       else if (event.awaitingAsyncWork) this.backgrounded(ticketId, session)
     })
-    this.subscriptions.set(ticketId, unsubscribe)
+    this.subscriptions.set(ticketId, { session, unsubscribe })
   }
 
-  /** Nothing the worker runs wakes it again: free its slot and report, or unload a ticket that ended meanwhile. */
+  /** Nothing the worker runs wakes it again: free its slot and report, or unload a ticket that stayed ended meanwhile. */
   private turnOver(ticketId: string, session: AgentSession, note?: string): void {
     this.runningTickets.delete(ticketId)
-    clearTimeout(this.limits.get(ticketId))
-    this.limits.delete(ticketId)
     if (this.unloadAfterEnd.delete(ticketId)) {
-      void this.host.sessions.stop(workerSessionId(ticketId), 'Ticket ended').catch((error: unknown) => this.background(Promise.reject(error)))
-      return
+      const current = this.host.store.tickets.get(ticketId)
+      if (!current || !liveTicket(current)) {
+        this.left.delete(ticketId)
+        this.stopSession(ticketId, 'Ticket ended')
+        return
+      }
     }
     void this.background(this.workerEnded(ticketId, session, note))
   }
 
   /**
-   * The worker's turn ended while its jobs or subagents run; their ends wake it, so it keeps its slot. A handoff to a person
-   * ends that at once: its subagents stop, and its own shell jobs, such as a server offered for review, run on until the
-   * Assignment ends without waking it. Otherwise the background work runs for at most BACKGROUND_LIMIT_MS.
+   * The worker's turn ended while its jobs or subagents run; their ends wake it, so it keeps its slot without a blind kill
+   * timer (Watchdog inspects long-running jobs semantically). A handoff to a person ends that at once: its subagents stop,
+   * and its own shell jobs, such as a server offered for review, run on until the Assignment ends without waking it.
    */
   private backgrounded(ticketId: string, session: AgentSession): void {
     const ticket = this.host.store.tickets.get(ticketId)
@@ -333,11 +350,8 @@ export class OMPExecutor implements Executor {
     if (ticket && handedOff(ticket)) {
       this.leaveToPerson(ticketId, session)
       this.turnOver(ticketId, session)
-      return
     }
-    if (!this.limits.has(ticketId)) this.limits.set(ticketId, setTimeout(() => this.limitReached(ticketId, session), BACKGROUND_LIMIT_MS))
   }
-
   /** Acknowledged jobs deliver nothing, so neither the jobs left running nor the cancelled ones wake the worker. */
   private leaveToPerson(ticketId: string, session: AgentSession): void {
     const jobs = session.asyncJobManager
@@ -352,29 +366,69 @@ export class OMPExecutor implements Executor {
     this.left.set(ticketId, left)
   }
 
-  /** Background work outlived its limit: stop the worker's shell jobs without waking it and report it waiting; subagents go on in its slot. */
-  private limitReached(ticketId: string, session: AgentSession): void {
-    this.limits.delete(ticketId)
-    const jobs = session.asyncJobManager
-    if (!jobs || session.isDisposed || this.host.sessions.get(workerSessionId(ticketId)) !== session) return
+  /** Live OMP background jobs of `ticketId`'s worker, excluding shell jobs left to a person at a handoff. */
+  runningJobs(ticketId: string, now = Date.now()): WorkerJobInfo[] {
+    const session = this.host.sessions.get(workerSessionId(ticketId))
+    const jobs = session && !session.isDisposed ? session.asyncJobManager : undefined
+    if (!jobs) return []
     const left = this.left.get(ticketId)
-    const running = jobs.getRunningJobs({ ownerId: MAIN_AGENT_ID }).filter(job => !left?.has(job.id))
-    const shell = running.filter(job => job.type === 'bash')
-    const subagents = running.filter(job => job.type === 'task')
-    jobs.acknowledgeDeliveries(shell.map(job => job.id))
-    for (const job of shell) jobs.cancel(job.id)
-    const stopped = shell.map(job => `${job.id} (${job.label.split('\n')[0]})`).join(', ') || 'none'
-    const note = `Background work outlived ${BACKGROUND_LIMIT_MS / 60_000} minutes after the turn. Stopped shell jobs: ${stopped}. `
-      + `Subagents still running: ${subagents.map(job => job.id).join(', ') || 'none'}.`
-    if (subagents.length) void this.background(this.workerEnded(ticketId, session, note))
-    else this.turnOver(ticketId, session, note)
+    return jobs.getRunningJobs({ ownerId: MAIN_AGENT_ID }).filter(job => !left?.has(job.id)).map(job => ({
+      id: job.id,
+      type: job.type,
+      label: job.label.split('\n')[0]!.slice(0, 200),
+      startedAt: new Date(job.startTime).toISOString(),
+      elapsedSeconds: Math.max(0, Math.floor((now - job.startTime) / 1000)),
+      ...(job.progressText ? { progress: job.progressText.slice(-600) } : {}),
+      ...(job.process ? { command: job.process.command.slice(0, 300), pids: job.process.pids() } : {}),
+    }))
   }
 
-  private clearBackground(ticketId: string): void {
-    clearTimeout(this.limits.get(ticketId))
-    this.limits.delete(ticketId)
-    this.left.delete(ticketId)
+  /** Cancel one hung/off-track background job of `ticketId` and wake its worker with the diagnostic reason. */
+  async cancelJob(ticketId: string, jobId: string, reason: string): Promise<boolean> {
+    const session = this.host.sessions.get(workerSessionId(ticketId))
+    const jobs = session && !session.isDisposed ? session.asyncJobManager : undefined
+    const left = this.left.get(ticketId)
+    if (!session || !jobs || left?.has(jobId)) return false
+    const running = jobs.getRunningJobs({ ownerId: MAIN_AGENT_ID }).filter(job => !left?.has(job.id))
+    const target = running.find(job => job.id === jobId)
+    if (!target) return false
+    jobs.acknowledgeDeliveries([jobId])
+    if (!jobs.cancel(jobId)) return false
+    const remaining = running.filter(job => job.id !== jobId)
+    const note = `[Watchdog] Stopped background job ${jobId} (${target.label.split('\n')[0]}): ${reason}`
+      + (remaining.length ? ` Remaining background jobs: ${remaining.map(job => job.id).join(', ')}.` : '')
+    await this.wakeAfterCancel(ticketId, session, note, remaining.length > 0)
+    return true
   }
+
+  private async wakeAfterCancel(ticketId: string, session: AgentSession, note: string, hasRemaining: boolean): Promise<void> {
+    const live = () => {
+      if (this.host.closing()) throw new Error('omp-superagent is stopping')
+      if (this.host.paused()) throw new Later('Processing is paused')
+      const current = this.host.store.tickets.get(ticketId)
+      if (!current || !liveTicket(current) || !runningAssignment(current) || this.unloadAfterEnd.has(ticketId)) {
+        throw new Error('The ticket ended before Watchdog wake')
+      }
+      if (this.stopping.has(ticketId) || session.isDisposed || this.host.sessions.get(workerSessionId(ticketId)) !== session) {
+        throw new Error('The worker Session is stopping')
+      }
+    }
+    const current = this.host.store.tickets.get(ticketId)
+    const assignment = current && liveTicket(current) ? runningAssignment(current) : undefined
+    if (!assignment || this.unloadAfterEnd.has(ticketId) || this.host.closing() || this.host.paused()) {
+      if (!hasRemaining && !session.isStreaming) this.turnOver(ticketId, session, note)
+      return
+    }
+    const requestId = key('watchdog-cancel', ticketId, assignment.id, String(++this.wakeSeq))
+    const promptText = `${note} Inspect current workspace and logs: recover or continue the remaining work, or call orchestrator_report (ready, blocked, failed or dropped).`
+    try {
+      await this.host.sessions.prompt(workerSessionId(ticketId), requestId, promptText, 'steer', live)
+    } catch (error) {
+      if (!hasRemaining && !session.isStreaming) this.turnOver(ticketId, session, note)
+      if (!this.host.closing() && !(error instanceof Later)) throw error
+    }
+  }
+
 
   /** `note` adds what the Executor did to the worker's background work to a waiting report. */
   private async workerEnded(ticketId: string, session: AgentSession, note?: string): Promise<void> {
@@ -388,18 +442,16 @@ export class OMPExecutor implements Executor {
       this.failed(ticketId, text || 'The worker model request failed')
       return
     }
-    const report = latestReport(ticket)
-    if (report?.state === 'ready' || report?.state === 'blocked' || report?.state === 'failed' || ticket.attention) return
+    if (handedOff(ticket)) return
+    const report = assignment.report
     const summary = [text || report?.summary, note].filter(Boolean).join('\n\n')
+    const reminder = 'Worker ended its turn with no background job running and without a terminal orchestrator_report. '
+      + 'If it is not waiting on a bound PR or external event, call orchestrator_ticket_request_status so the worker records its report.'
+    const relayText = [summary, reminder].filter(Boolean).join('\n\n')
     this.host.store.atomic(() => {
       const updated = this.host.engine.report(ticketId, { state: 'waiting', summary })
-      if (summary) {
-        const relay = resultRelay(updated, 'waiting', summary)
-        this.host.sessions.relay(relay.id, relay.text)
-      } else {
-        const relay = resultRelay(updated, 'waiting', 'Worker ended without a status report. Use orchestrator_ticket_request_status to request one.')
-        this.host.sessions.relay(relay.id, relay.text)
-      }
+      const relay = resultRelay(updated, 'waiting', relayText)
+      this.host.sessions.relay(relay.id, relay.text)
     })
   }
 
@@ -419,6 +471,7 @@ export class OMPExecutor implements Executor {
     }
     await this.stopped(ticket.id)
     if (!current()) return
+    this.unloadAfterEnd.delete(ticket.id)
     const sessionId = workerSessionId(ticket.id)
     const session = await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker', ticket)
     this.observe(session, ticket.id)
@@ -456,11 +509,9 @@ export class OMPExecutor implements Executor {
   }
 
   dispose(): void {
-    for (const unsubscribe of this.subscriptions.values()) unsubscribe()
+    for (const { unsubscribe } of this.subscriptions.values()) unsubscribe()
     this.subscriptions.clear()
     this.runningTickets.clear()
-    for (const limit of this.limits.values()) clearTimeout(limit)
-    this.limits.clear()
     this.left.clear()
   }
 

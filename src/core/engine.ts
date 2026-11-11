@@ -126,6 +126,12 @@ export class Engine {
    */
   requestStatus(ticketId: string): boolean { return this.repo.atomic(() => this.tickets.requestStatus(ticketId)) }
   /**
+   * Wake an open ticket's running worker with a Watchdog diagnostic message so it can inspect, finish or report.
+   * @returns whether the worker was woken.
+   * @throws UserError when the ticket is unknown.
+   */
+  wakeWorker(ticketId: string, text: string): boolean { return this.repo.atomic(() => this.tickets.wakeWorker(ticketId, text)) }
+  /**
    * Queue a message for the Channel its purpose names: an acknowledgement or an answer goes where the person's message was
    * written, attention where the message that raised the question was, else, like a result, to the conversation the ticket
    * started in. A message queued before is not queued again (see `Replies.reply`).
@@ -268,3 +274,5 @@ export type EngineForSettings = Pick<Engine, 'policyChanged'>
 /** What the Executor tells the Engine, and what its workers ask of it. */
 export type EngineForExecutor = Pick<Engine, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed'
   | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply'>
+/** What the Watchdog Control Loop asks of the Engine. */
+export type EngineForWatchdog = Pick<Engine, 'wakeWorker' | 'retryTicket'>

@@ -154,6 +154,18 @@ export class Tickets extends EnginePart {
     return true
   }
   /**
+   * Wake an open ticket's running Assignment with a Watchdog diagnostic/recovery prompt so the worker can finish, recover or report.
+   * @returns whether the wake input was queued.
+   * @throws UserError when the ticket is unknown.
+   */
+  wakeWorker(ticketId: string, text: string): boolean {
+    const ticket = this.require(ticketId)
+    if (!liveTicket(ticket) || !runningAssignment(ticket)) return false
+    const at = this.now()
+    this.addInput(ticket, { id: key('input', ticketId, 'watchdog', at, text), kind: 'text', text: `[Watchdog] ${text}`, at })
+    return true
+  }
+  /**
    * Stops a ticket on behalf of a human, ending any active assignments.
    * @throws UserError when the ticket is unknown.
    */

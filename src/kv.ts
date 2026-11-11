@@ -31,19 +31,21 @@ export const KV = {
   prompts: { revision: record<number>('prompt-revision'), version: family<PromptVersion, [revision: number]>('prompt-version:'),
     /** The built-in text of a prompt part an override was edited from, by its `base`, which shows what an upgrade changed. */
     builtIn: family<string, [base: string]>('prompt-built-in:') },
-  /** Runtime: the main Session's ID. */
-  runtime: { masterId: record<string>('master-id'),
-    startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null; advisor?: RoleModel | null }>('startup-models') },
+  /** Runtime: the main and Watchdog Session IDs, and the startup JSON's models and GitHub Source as last started with. */
+  runtime: { masterId: record<string>('master-id'), watchdogId: record<string>('watchdog-id'),
+    startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null; advisor?: RoleModel | null }>('startup-models'),
+    startupGithub: record<{ enabled: boolean; config: Record<string, unknown> } | null>('startup-github') },
   /** Sessions: OMP JSONL file by durable external alias. */
   sessions: { files: family<string, [alias: string]>('session-file:') },
   /** Per-Source resolved display names mapped from source-native IDs. */
   sources: { labels: family<Record<string, string>, [source: string]>('source-labels:') },
   /**
-   * GitHub Source: notification cursor and pending retries; per-Issue/PR read cursor shared by notification and polled reads;
-   * per-stream cursor, start times by kind, and ETag; default-branch CI state; and per-PR CI fingerprint and revision (`revision`
-   * counts reported CI changes so each produces a distinct Trigger ID).
+   * GitHub Source: the repository its stored conversations belong to; notification cursor and pending retries; per-Issue/PR read
+   * cursor shared by notification and polled reads; per-stream cursor, start times by kind, and ETag; default-branch CI state; and
+   * per-PR CI fingerprint and revision (`revision` counts reported CI changes so each produces a distinct Trigger ID).
    */
-  github: { since: record<string>('github-since'), retries: record<Record<string, Retry>>('github-retry'),
+  github: { repository: record<{ id: number; name: string }>('github-repository'),
+    since: record<string>('github-since'), retries: record<Record<string, Retry>>('github-retry'),
     cursor: family<string, [number: number]>('github-cursor:'),
     stream: family<{ since: string; started: Record<string, string>; etag?: string }, [stream: string]>('github-stream:'),
     branchCi: record<{ branch?: string; failures?: string[]; revision: number }>('github-branch-ci'),

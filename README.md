@@ -9,16 +9,16 @@
 ## 它能做什么
 
 - **GitHub**：在 Issue/PR 里 `@agent 修一下 README 的错别字` → 确认收到 → 干活 → 回帖交付结果。
-- **网页面板**（默认 `http://127.0.0.1:3082/`）：聊天、上传附件（≤3 个/条，≤5 MiB/个）、查看每个 Worker 进度、在线切换模型、重置会话。
+- **网页面板**（默认 `http://127.0.0.1:3082/`）：聊天、上传附件（≤3 个/条，≤5 MiB/个）、查看每个 Worker 进度、在线切换模型、连接 GitHub、重置会话。
 - **微信**：面板「设置 → 微信」扫码绑定，直接在微信里发需求、收文件/图片。
-- **后台任务与子代理**：Worker 的长命令超过 60 秒自动转后台，跑完唤醒 Worker；Worker 可派 `ticket-task` 子代理并行处理独立部分（每个 Worker 最多 8 个、嵌套 2 层）。回合结束后后台最多再跑 30 分钟；交接给人后留下的服务（如 dev server）保留到任务结束。
+- **后台任务、子代理与 Watchdog 看门狗**：Worker 的长命令超过 60 秒自动转后台，跑完立即唤醒 Worker，不再被固定超时盲目杀断；Worker 可派 `ticket-task` 子代理并行处理独立部分（每个 Worker 最多 8 个、嵌套 2 层）。独立的 **Watchdog Session** 组成外部控制回路（Control Loop），定时巡检基础设施异常、漏发的完成回复以及长任务语义进展——正常推进的长任务不打扰，卡死任务精准取消并唤醒恢复，外部后台任务跑完而 Worker 静默时自动唤醒交付；交接给人后留下的服务（如 dev server）保留到任务结束。
 - **不做**：飞书、DSH 托管、在线改 Prompt。
 
 ## 快速开始
 
 **前置**：Bun `>=1.4.4`、git `>=2.32`；已配置好模型提供商的 OMP `agentDir`；一个全新的空 `stateDir`（旧状态不会被迁移，直接拒绝）。若用 GitHub：需要一个专用账号（有仓库 push 权限）和对应的 `gh` 封装，别用个人账号。
 
-**1. 写配置** `config.json`（路径均用绝对路径）。只用网页聊天时可去掉 `github`：
+**1. 写配置** `config.json`（路径均用绝对路径）。只用网页聊天时可去掉 `github`，之后也能在面板「设置 → GitHub」里填仓库和 `gh` 封装来连接（保存时校验账号与 push 权限，立即生效）：
 
 ```json
 {
@@ -57,7 +57,7 @@ bun run build
 ./lib/cli.js --config /absolute/path/config.json   # 或 bun start -- --config ...
 ```
 
-启动时会校验配置、模型、GitHub 身份与仓库权限，通过后打印 `omp-superagent ready` 和面板地址。`Ctrl-C`/`SIGTERM` 会有序关闭；改配置需重启。
+启动时会校验配置、模型、GitHub 身份与仓库权限，通过后打印 `omp-superagent ready` 和面板地址。`Ctrl-C`/`SIGTERM` 会有序关闭；模型和 GitHub 连接可在面板设置里在线修改，其余配置改动需重启。
 
 **3. 使用**：在白名单账号下 `@<agent-login> 你的需求`，或直接在网页/微信里发消息。**不要删除 `stateDir` 里的 SQLite 和 JSONL**，它们保证重启后不重复回复。
 
@@ -111,7 +111,7 @@ flowchart LR
 | --- | --- |
 | `src/cli.ts`, `src/deployment.ts`, `src/policy.ts` | 入口、配置 schema、授权策略 |
 | `src/core/` | 领域引擎：Ticket、Eval、Assignment、回复 |
-| `src/app/` | Runtime、Session、投递、Effect、Web 面板、微信、Worker 视图、模型设置、工具 |
+| `src/app/` | Runtime、Session、投递、Effect、Web 面板、微信、Worker 视图、模型设置、GitHub 连接、工具 |
 | `src/sources/` | GitHub 与 chat 来源 |
 | `src/executor/omp.ts` | 启动 / 唤醒 / 回收 Worker |
 | `prompts/`, `skills/`, `web/` | 提示词、技能、前端面板 |

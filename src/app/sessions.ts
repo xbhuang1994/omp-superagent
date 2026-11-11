@@ -12,10 +12,11 @@ import { mandateInstructions, workerSessionId } from '../executor/omp.ts'
 import { packagePath } from '../infra/paths.ts'
 import { KV } from '../kv.ts'
 import type { Machine } from '../deployment.ts'
+import { watchdogPrompt } from './context.ts'
 import { AgentDelivery } from './delivery.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
-import type { Prompts } from './prompts.ts'
+import { environmentSection, type Prompts } from './prompts.ts'
 import { bundledSkills } from './skill-files.ts'
 import type { Store } from './store.ts'
 import type { Tool } from './tools/tool.ts'
@@ -111,9 +112,11 @@ export interface OMPSessionsHost {
   readonly engine: Pick<EngineForExecutor, 'inputsDelivered' | 'inputsRead'>
   readonly machine: Pick<Machine, 'stateDir' | 'agentDir'>
   readonly masterId: string
+  readonly watchdogId?: string
   readonly lifetime: AbortSignal
   closing(): boolean
   environment(ticket: Ticket): Variable[]
+  watchdogEnvironment?(): Variable[] | undefined
   tools(sessionId: string, ticket?: Ticket): Tool[]
 }
 
@@ -172,7 +175,11 @@ export class OMPSessions {
   async applyModel(role: 'orchestrator' | 'worker' | 'advisor', selection: RoleModel | null): Promise<void> {
     await this.checkModel(selection)
     for (const [sessionId, session] of this.loaded) {
-      if (session.isDisposed || (role === 'orchestrator') !== (sessionId === this.host.masterId)) continue
+      if (session.isDisposed) continue
+      const isMain = sessionId === this.host.masterId
+      const isWatchdog = this.host.watchdogId !== undefined && sessionId === this.host.watchdogId
+      if (role === 'orchestrator' && !isMain && !(isWatchdog && selection)) continue
+      if ((role === 'worker' || role === 'advisor') && (isMain || isWatchdog)) continue
       if (role === 'advisor') {
         if (selection) session.settings.overrideModelRoles({ advisor: roleSelector(selection) })
         session.setAdvisorEnabled(!!selection)
@@ -191,7 +198,7 @@ export class OMPSessions {
     if (selection && !this.modelRegistry.find(selection.provider, selection.model)) throw new Error(`Unknown OMP model: ${selection.provider}/${selection.model}`)
   }
 
-  async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
+  async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'watchdog', ticket?: Ticket): Promise<AgentSession> {
     await this.ready
     const current = this.loaded.get(sessionId)
     if (current) return current
@@ -204,7 +211,7 @@ export class OMPSessions {
     return opening
   }
 
-  private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
+  private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'watchdog', ticket?: Ticket): Promise<AgentSession> {
     if (this.host.closing()) throw new Error('omp-superagent is stopping')
     if (role === 'worker' && (!ticket || !liveTicket(ticket))) throw new Error('Worker Session needs a live Ticket')
     const sessionDir = join(this.host.machine.stateDir, 'sessions')
@@ -216,13 +223,16 @@ export class OMPSessions {
     } else sessionManager = SessionManager.create(cwd, sessionDir)
 
     const settings = this.host.store.settings()
-    const configured = role === 'orchestrator' ? settings.eval.model : settings.executor.model
+    const configured = role === 'orchestrator' ? settings.eval.model
+      : role === 'watchdog' ? (settings.eval.model ?? settings.executor.model) : settings.executor.model
     const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
     if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
     // RoleModelSchema admits exactly OMP's selector strings; its packages declare them through incompatible enum aliases.
     const thinkingLevel = configured?.thinkingLevel as never
     const version = this.host.prompts.current()
-    const composed = this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)
+    const composed = role === 'watchdog'
+      ? `${watchdogPrompt}\n\n${environmentSection(version.config, this.host.watchdogEnvironment?.())}`
+      : this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)
     const mandate = ticket ? mandateInstructions(ticket.mandate) : ''
     const customSystemPrompt = mandate ? `${composed}\n\n${mandate}` : composed
     const tools = this.host.tools(sessionId, ticket)
@@ -250,11 +260,11 @@ export class OMPSessions {
       modelRegistry: this.modelRegistry,
       agentRegistry: new AgentRegistry(),
       // A worker advisor is a second model that reviews each worker turn and injects notes; subagents never get one.
-      settings: Settings.isolated(role === 'orchestrator' ? ORCHESTRATOR_SETTINGS : { ...WORKER_SETTINGS, 'advisor.enabled': !!settings.executor.advisor,
-        ...settings.executor.advisor ? { modelRoles: { advisor: roleSelector(settings.executor.advisor) } } : {} }),
+      settings: Settings.isolated(role === 'worker' ? { ...WORKER_SETTINGS, 'advisor.enabled': !!settings.executor.advisor,
+        ...settings.executor.advisor ? { modelRoles: { advisor: roleSelector(settings.executor.advisor) } } : {} } : ORCHESTRATOR_SETTINGS),
       sessionManager,
       customSystemPrompt,
-      noContextFiles: role === 'orchestrator',
+      noContextFiles: role !== 'worker',
       promptTemplates: [],
       slashCommands: [],
       rules: [],
@@ -385,6 +395,12 @@ export class OMPSessions {
   async resetOrchestrator(): Promise<void> {
     await this.stop(this.host.masterId, 'Orchestrator Session reset')
     this.host.store.delete(KV.sessions.files(this.host.masterId))
+    await this.ensure(this.host.masterId, this.host.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
+  }
+
+  /** Reopen the main Session from its transcript, so its system prompt is composed from the current execution environment. */
+  async reopenOrchestrator(): Promise<void> {
+    await this.stop(this.host.masterId, 'Orchestrator Session reopened')
     await this.ensure(this.host.masterId, this.host.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
   }
 

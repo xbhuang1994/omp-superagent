@@ -16,7 +16,7 @@ A worker command still running after 60 seconds, or when a message is steered in
 
 A turn that ends while jobs run emits a non-terminal `agent_end` with `awaitingAsyncWork`. The Ticket keeps its slot and stays working, with no waiting report; the job's wake starts the next turn in that slot. A turn that ends with nothing running completes as above.
 
-After such a turn, background work has 30 minutes. At the limit the Executor acknowledges and cancels the worker's own shell jobs, so their end wakes no one, and reports `waiting` with the worker's last words, the stopped jobs and the subagents still running. Subagents go on in the slot and wake the worker when they end.
+The Executor imposes no blind kill timer on background jobs after a turn ends: normal commands use OMP's per-command timeouts, while long `timeout: 0` jobs and `ticket-task` subagents run until they settle and wake the worker. Instead, the external `Watchdog` Control Loop inspects long-running and idle tickets periodically—leaving productive runs untouched, waking workers whose detached external work finished or stalled, and surgically cancelling a hung job (`cancelJob`) while waking the worker with the reason; if waking fails with no job left, the Executor falls back to `waiting`.
 
 A handoff to a person frees the slot at once: a ready report or a question with no Input delivered since, or a blocked or failed report. Its subagents are cancelled. Its shell jobs, such as a server offered for review, are acknowledged and run until the Assignment ends; they hold no slot, are exempt from the limit in later turns, and their end wakes no one. OMP emits no further `agent_end` after an acknowledgement, so the Executor completes that turn itself.
 

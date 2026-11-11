@@ -114,7 +114,10 @@ export function pollFailure(failures: number, threshold: number, error: unknown)
 export async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   let interval = 60
   let failures = 0
-  await ctx.ready
+  // A start that fails stops the watcher before `ready` settles, and waits for it to end.
+  if (signal.aborted) return
+  await Promise.race([ctx.ready, new Promise<void>(resolve => { signal.addEventListener('abort', () => { resolve() }, { once: true }) })])
+  if (signal.aborted) return
   // Deployment validation completes before watcher startup.
   if (!ctx.configured()) { ctx.report('github', health('paused', 'setupPending')); return }
   while (!signal.aborted) {
@@ -195,7 +198,9 @@ async function readStream(ctx: SourceContext, round: Round, id: string, path: st
   const started: Record<string, string> = Object.fromEntries(kinds.map(kind => [kind, before[kind] ?? round.started]))
   const horizon = Math.floor((Date.parse(round.started) - POLL_HORIZON_MS) / 3_600_000) * 3_600_000
   const since = new Date(Math.max(Date.parse(stored?.since ?? round.started), horizon)).toISOString()
-  const conditional = stored?.etag && stored.since === since ? ['-H', `If-None-Match: ${stored.etag}`] : []
+  // A kind switched on or off since the stored page changes what `started` must hold, which only a full read saves.
+  const unchanged = kinds.length === Object.keys(before).length && kinds.every(kind => kind in before)
+  const conditional = stored?.etag && stored.since === since && unchanged ? ['-H', `If-None-Match: ${stored.etag}`] : []
   let raw: string
   const listed = `${path}&sort=updated&direction=asc&per_page=100&since=${encodeURIComponent(since)}`
   try { raw = await ctx.commands.withSignal(round.signal).api(listed, '--include', ...conditional) }

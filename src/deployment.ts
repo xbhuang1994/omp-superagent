@@ -41,6 +41,8 @@ export const GithubAccountsSchema = z.object({
 })
 export interface Deployment extends Machine {
   repository: string
+  /** GitHub's numeric repository ID, which a rename or transfer keeps. */
+  repositoryId: number
   github: { cli: string; login: string; noreply: string }
 }
 
@@ -56,13 +58,14 @@ export function executable(name: string, path: string, exclude?: string): string
 }
 
 export type Probe = (argv: string[]) => Promise<string>
+/** Runs the CLI as workers do: without the worker shim directory on PATH and without ambient tokens, which gh prefers over the wrapper's account. */
 export function workerProbe(stateDir: string, cwd: string, signal: AbortSignal): Probe {
   const path = withoutDirectory(process.env.PATH ?? '', workerBin(stateDir))
-  return argv => runAsWorker(['env', `PATH=${path}`, ...argv], cwd, AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
+  return argv => runAsWorker(['env', '-u', 'GH_TOKEN', '-u', 'GITHUB_TOKEN', `PATH=${path}`, ...argv], cwd, AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
 }
 
 const GithubUser = z.object({ login: z.string().regex(/^[A-Za-z0-9-]+$/), id: z.number().int().positive() })
-const RepositoryAccess = z.object({ name: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/), push: z.boolean().nullable() })
+const RepositoryAccess = z.object({ id: z.number().int().positive(), name: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/), push: z.boolean().nullable() })
 function parsed<T>(schema: z.ZodType<T>, text: string): T | undefined {
   let value: unknown
   try { value = JSON.parse(text) } catch { return undefined }
@@ -82,10 +85,10 @@ export async function resolveDeployment(machine: Machine, github: unknown, probe
   const text = await probe([cli, 'api', 'user']).catch((error: unknown) => { throw new SetupError('agentCliSignedOut', { output: reason(error) }) })
   const agent = parsed(GithubUser, text)
   if (!agent) throw new SetupError('agentCliNoAccount')
-  const access = parsed(RepositoryAccess, await probe([cli, 'api', `repos/${remote}`, '--jq', '{name: .full_name, push: .permissions.push}'])
+  const access = parsed(RepositoryAccess, await probe([cli, 'api', `repos/${remote}`, '--jq', '{id: .id, name: .full_name, push: .permissions.push}'])
     .catch((error: unknown) => { throw new SetupError('repositoryUnreadable', { account: agent.login, repository: remote, output: reason(error) }) }))
   if (!access) throw new SetupError('repositoryUnreported', { repository: remote })
   if (access.push !== true) throw new SetupError('repositoryReadOnly', { account: agent.login, repository: remote })
-  return { ...machine, repository: access.name,
+  return { ...machine, repository: access.name, repositoryId: access.id,
     github: { cli, login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com` } }
 }

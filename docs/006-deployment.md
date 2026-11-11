@@ -10,13 +10,13 @@ bun run build
 ./lib/cli.js --config /absolute/path/config.json
 ```
 
-`omp-superagent` owns one state-directory lock. A second process on the same directory fails before opening SQLite. GitHub identity and push access are validated only when `sources.github.enabled` is true; omit that source for Web-only chat. `SIGINT`/`SIGTERM` performs ordered cleanup and exits zero on success.
+`omp-superagent` owns one state-directory lock. A second process on the same directory fails before opening SQLite. GitHub identity and push access are validated when `sources.github.enabled` is true, at startup and when the settings window connects it; omit that source for Web-only chat. `SIGINT`/`SIGTERM` performs ordered cleanup and exits zero on success.
 
 ## Startup JSON
 
 `stateDir` is required and absolute. `agentDir` is optional and defaults to `<stateDir>/omp`. Optional machine limits are `promptMaxChars` (default 100000), `admissionContextMaxPages` (10), and `admissionContextTimeoutMs` (15000). Unknown keys fail.
 
-The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, matching `SettingsSchema`. Startup JSON supplies initial settings; model selectors can also be managed in the settings window. Other changed values are saved on startup; policy changes create Inputs on open Tickets.
+The remaining keys are `paused`, `sources`, `policy`, `eval`, and `executor`, matching `SettingsSchema`. Startup JSON supplies initial settings; model selectors and the GitHub Source can also be managed in the settings window. Other changed values are saved on startup; policy changes create Inputs on open Tickets.
 
 ### Chat Source and ticket authorization
 
@@ -60,17 +60,26 @@ Only schema 1 is accepted. An existing non-schema-1 SQLite file is preserved and
 
 ## GitHub and worker environment
 
-`sources.github.config.repository` is `owner/name`; `cli` is a command name or absolute executable path. The CLI must return the agent identity and push access. Workers invoke `gh` through the shim, which selects that account and removes itself from nested `PATH` lookup. Git uses the isolated config and its credential helper. Ambient GitHub tokens, repository-selection variables, interactive prompts and commit identity overrides are removed.
+`sources.github.config.repository` is `owner/name`; `cli` is a command name or absolute executable path. The CLI must return the agent identity and push access; the check runs without ambient `GH_TOKEN`/`GITHUB_TOKEN`, as every later call does, so it reads the wrapper's account. Workers invoke `gh` through the shim, which selects that account and removes itself from nested `PATH` lookup. Git uses the isolated config and its credential helper. Ambient GitHub tokens, repository-selection variables, interactive prompts and commit identity overrides are removed.
 
 These are account-selection guardrails, not an OS security sandbox. Workers run as the operator's OS user. `executor.blockedCommands` may add command shims, but cannot block `gh` or `git`.
 
 The documented environment names are `OMP_SUPERAGENT_DIR`, `OMP_SUPERAGENT_NAME`, `OMP_SUPERAGENT_TICKET`, `OMP_SUPERAGENT_BLOCKED_COMMANDS`, `OMP_SUPERAGENT_GITHUB_REPOSITORY`, `OMP_SUPERAGENT_GITHUB_ACCOUNT`, `OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL`, `OMP_SUPERAGENT_GITHUB_NUMBER`, and `OMP_SUPERAGENT_GITHUB_PR_HEAD`.
 
+### Connecting from the settings window
+
+**设置 → GitHub** edits the GitHub Source. `GET /api/settings/github` returns `{ enabled, config, connection, health }`; `connection` is `{ repository, account }` while connected and `null` otherwise. `PUT /api/settings/github` accepts `{ "enabled": boolean, "config": { repository, cli, pollSeconds, failuresBeforeError, observeIssues, observePulls, observeComments, observeCi } }`. It verifies the CLI's account and push access as startup does; a failure answers 400 and changes nothing. Once verified it stops the polling loop, rewrites the worker shims and git configuration, saves the Source, restarts polling, and reopens the orchestrator Session from its transcript so its prompt names the connected account and repository. Disconnecting stops polling and leaves the worker environment in place until restart, so running workers keep the agent account. `policy.sources.github.allowed` stays in the startup JSON.
+
+Startup records the startup JSON's GitHub Source as a baseline, as it does for models: an unchanged JSON keeps the panel's connection after restart, and an edited one wins. A saved connection that no longer verifies fails the start; set `sources.github` to `{ "enabled": false }` in the startup JSON to start without it.
+
+One state directory holds the conversations of one repository, recognized by GitHub's numeric repository ID, which a rename or transfer keeps. With no GitHub Thread stored, connecting another repository clears the previous one's read cursors and CI baselines. Once a Thread exists the change is refused, since Threads are keyed by Issue and PR number alone; use a new `stateDir`.
+
 ## Troubleshooting
 
 - Invalid path/JSON/Zod error: fix the named config field; `--config` itself must be absolute.
 - Unknown OMP model: correct `provider`/`model` in `models.yml` or startup JSON.
-- GitHub validation error: fix the wrapper's identity or repository push permission.
+- GitHub validation error: fix the wrapper's identity or repository push permission, or disable `sources.github` in the startup JSON to start without it.
+- "This state directory holds GitHub conversations of …": the directory is bound to another repository; use a new empty `stateDir` for the new one.
 - Existing schema error: use a new empty `stateDir`; no automatic migration or clearing occurs.
 - Corrupt/missing transcript: restore the file named by the alias/path error. The service never replaces it with empty history.
 - Repeated work after restart: do not delete SQLite or JSONL; idempotency keys and persisted SessionEntries prevent replay.

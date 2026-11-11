@@ -45,6 +45,7 @@ export class AgentDelivery {
     const installed = (entry: SessionEntry): void => {
       try { previous?.(entry) } finally { onEntry(entry) }
     }
+    session.sessionManager.onEntryAppended = installed
     const unsubscribe = session.subscribe(event => {
       if (event.type !== 'message_end' || event.message.role !== 'custom' || event.message.customType !== 'omp-superagent') return
       const details: unknown = event.message.details

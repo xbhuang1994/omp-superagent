@@ -9,6 +9,7 @@ import type { ChatSource } from '../sources/chat.ts'
 import type { AgentMessage } from '@oh-my-pi/pi-agent-core'
 import type { WorkerView } from './workers.ts'
 import type { ModelSettings } from './model-settings.ts'
+import type { GithubConnection } from './github-connection.ts'
 
 interface AttachmentInfo { name: string; mediaType: string; kind: 'image' | 'text' | 'file' }
 interface PanelMessage { id: number; role: 'user' | 'assistant' | 'event'; text: string; at?: number; images?: { name: string; mediaType: string; data: string }[]; files?: AttachmentInfo[] }
@@ -73,18 +74,20 @@ export class WebPanel {
   constructor(private readonly options: WebOptions, private readonly masterId: string,
     private readonly sessions: Pick<OMPSessions, 'get'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>,
     private readonly resetSession: () => Promise<void>, private readonly chat: Pick<ChatSource, 'receiveWeb'>, private readonly workers: Pick<WorkerView, 'list' | 'detail'>,
-    private readonly models: Pick<ModelSettings, 'view' | 'update'>) {}
+    private readonly models: Pick<ModelSettings, 'view' | 'update'>, private readonly github: Pick<GithubConnection, 'view' | 'update'>) {}
 
   get url(): string { return `http://${this.options.host}:${this.actualPort}/` }
 
   async start(): Promise<void> {
     if (!this.options.enabled || this.server) return
-    this.server = createServer((request, response) => { void this.handle(request, response) })
+    // Kept only once it listens: a server whose listen failed has nothing to close.
+    const server = createServer((request, response) => { void this.handle(request, response) })
     await new Promise<void>((resolve, reject) => {
-      this.server!.once('error', reject)
-      this.server!.listen(this.options.port, this.options.host, resolve)
+      server.once('error', reject)
+      server.listen(this.options.port, this.options.host, resolve)
     })
-    const address = this.server.address()
+    this.server = server
+    const address = server.address()
     if (address && typeof address === 'object') this.actualPort = address.port
   }
 
@@ -111,6 +114,8 @@ export class WebPanel {
       }
       if (request.method === 'GET' && path === '/api/settings/models') return this.json(response, 200, await this.models.view())
       if (request.method === 'PUT' && path === '/api/settings/models') return this.json(response, 200, await this.models.update(JSON.parse(await this.body(request))))
+      if (request.method === 'GET' && path === '/api/settings/github') return this.json(response, 200, this.github.view())
+      if (request.method === 'PUT' && path === '/api/settings/github') return this.json(response, 200, await this.github.update(JSON.parse(await this.body(request))))
       if (request.method === 'POST' && path === '/api/session/reset') { await this.resetSession(); return this.json(response, 200, { reset: true }) }
       if (request.method === 'GET' && path === '/api/wechat') return this.json(response, 200, this.wechat.status())
       if (request.method === 'POST' && path === '/api/wechat/connect') return this.json(response, 200, await this.wechat.connect())

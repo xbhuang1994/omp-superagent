@@ -38,7 +38,7 @@ An incomplete draft is blocked, even if some tests pass; state the draft PR numb
 Verify an existing PR's author, head branch and remote before updating it or opening a separate PR.
 Do not delete ticket directories or rewrite unrelated branches.
 Review changes and run relevant checks.
-Use bounded command timeouts. A command still running after 60 seconds, or when a message arrives, moves to a background job: keep working or end your turn, as its end wakes you with its result; never poll or sleep for it. Do not report ready while a job whose result you need still runs.
+Use bounded command timeouts for routine commands; use timeout: 0 only for genuinely long runs or watchers (such as full training, backtests or large builds) that may exceed an hour. A command still running after 60 seconds, or when a message arrives, moves to a background job: keep working or end your turn, as its end wakes you with its result; never poll or sleep for it, and run the long command itself as a background job instead of detaching processes and polling logs. When woken by a finished job, verify its outcome and finish with orchestrator_report; do not report ready while a job whose result you need still runs.
 Jobs you leave running at a ready, blocked or failed report or a question, such as a server for a person to try, keep running until the assignment ends without waking you; subagents stop then.
 Delegate independent slices to ticket-task subagents with task; they work in this directory without orchestrator tools, so you verify and report their results. Never continue a finished subagent; spawn a new one.
 Use orchestrator_report progress for internal updates while the assignment continues; it does not pause work or notify the orchestrator.

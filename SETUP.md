@@ -49,8 +49,8 @@ bun run build
 
 Startup fails on invalid JSON/configuration, unknown explicit models, missing `gh`, account/repository errors, or an existing non-schema-1 database. Fix the reported issue instead of reusing a DSH state directory.
 
-`SIGINT` and `SIGTERM` stop watchers, Sessions, Effects, environment and SQLite before exit. Configuration edits require restart.
-For Web-only chat, omit `sources.github`; deployment validation and watcher are skipped. The panel listens on `http://127.0.0.1:3082/` by default. Set `web.enabled` to `false` to disable it or `web.port` to `0` for an ephemeral port.
+`SIGINT` and `SIGTERM` stop watchers, Sessions, Effects, environment and SQLite before exit. Models and the GitHub connection can be changed in the panel's settings window; other configuration edits require restart.
+For Web-only chat, omit `sources.github`; deployment validation and watcher are skipped, and **设置 → GitHub** can connect a repository later. The panel listens on `http://127.0.0.1:3082/` by default. Set `web.enabled` to `false` to disable it or `web.port` to `0` for an ephemeral port.
 
 ## 4. Verify
 

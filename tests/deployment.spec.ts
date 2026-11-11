@@ -34,14 +34,14 @@ describe('GitHub deployment', () => {
     expect(() => executable('relative/gh', bin)).toThrow('absolute path')
   })
   it('validates the account and canonical repository push access', async () => {
-    const probe: Probe = async argv => argv.includes('user') ? '{"login":"agent","id":7}' : '{"name":"acme/widgets","push":true}'
+    const probe: Probe = async argv => argv.includes('user') ? '{"login":"agent","id":7}' : '{"id":11,"name":"acme/widgets","push":true}'
     const deployment = await resolveDeployment(machineOf(Config.parse(minimal())), { repository: 'acme/old', cli: 'gh' }, probe, dir)
-    expect(deployment).toMatchObject({ repository: 'acme/widgets', github: { login: 'agent', noreply: '7+agent@users.noreply.github.com' } })
+    expect(deployment).toMatchObject({ repository: 'acme/widgets', repositoryId: 11, github: { login: 'agent', noreply: '7+agent@users.noreply.github.com' } })
   })
   it('fails closed for missing accounts or read-only repositories', async () => {
     const machine = machineOf(Config.parse(minimal()))
     await expect(resolveDeployment(machine, { repository: 'acme/widgets', cli: 'gh' }, async () => '{}', dir)).rejects.toThrow('account')
-    const probe: Probe = async argv => argv.includes('user') ? '{"login":"agent","id":7}' : '{"name":"acme/widgets","push":false}'
+    const probe: Probe = async argv => argv.includes('user') ? '{"login":"agent","id":7}' : '{"id":11,"name":"acme/widgets","push":false}'
     await expect(resolveDeployment(machine, { repository: 'acme/widgets', cli: 'gh' }, probe, dir)).rejects.toThrow('cannot push')
   })
 })

@@ -80,6 +80,7 @@
       <nav class="settings-tabs" aria-label="设置分类">
         <button class="settings-tab active" type="button" data-settings-tab="models" role="tab" aria-selected="true">模型</button>
         <button class="settings-tab" type="button" data-settings-tab="wechat" role="tab" aria-selected="false">微信</button>
+        <button class="settings-tab" type="button" data-settings-tab="github" role="tab" aria-selected="false">GitHub</button>
       </nav>
       <section id="settings-models" class="settings-page" role="tabpanel">
         <h3>模型配置</h3>
@@ -121,6 +122,37 @@
             <button id="wechat-refresh" type="button">连接微信</button>
           </div>
         </div>
+      </section>
+      <section id="settings-github" class="settings-page" role="tabpanel" hidden>
+        <h3>GitHub 连接</h3>
+        <p class="settings-intro">连接一个仓库和智能体专用的 GitHub 账号。保存时校验账号与推送权限，通过后立即生效并跨重启保留；校验失败时现有连接不变。</p>
+        <form id="github-form" class="model-form">
+          <fieldset class="model-card">
+            <legend>连接</legend>
+            <p id="github-status" class="github-status" role="status">正在读取连接状态…</p>
+            <label class="check"><input id="github-enabled" type="checkbox">启用 GitHub 来源</label>
+            <label for="github-repository">仓库（owner/name）</label>
+            <input id="github-repository" type="text" pattern="[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+" placeholder="owner/repo" autocomplete="off" spellcheck="false">
+            <label for="github-cli">智能体的 GitHub CLI（命令名或绝对路径，通常是登录了专用账号的 gh 封装）</label>
+            <input id="github-cli" type="text" placeholder="/usr/local/bin/gh-agent" autocomplete="off" spellcheck="false">
+          </fieldset>
+          <fieldset class="model-card">
+            <legend>接收范围</legend>
+            <p class="github-status">@ 智能体的内容始终接收。打开下列开关后，没有 @ 的内容也会收到，由策略决定是否成为候选；从打开时开始，不读以前的。</p>
+            <label class="check"><input id="github-observe-issues" type="checkbox">仓库里的新 Issue</label>
+            <label class="check"><input id="github-observe-pulls" type="checkbox">仓库里的新 PR</label>
+            <label class="check"><input id="github-observe-comments" type="checkbox">仓库里的评论</label>
+            <label class="check"><input id="github-observe-ci" type="checkbox">默认分支的 CI</label>
+          </fieldset>
+          <fieldset class="model-card">
+            <legend>轮询</legend>
+            <label for="github-poll-seconds">轮询间隔 / 秒（60–3600，GitHub 要求更长时以 GitHub 为准）</label>
+            <input id="github-poll-seconds" type="number" min="60" max="3600" step="1" required>
+            <label for="github-failures">连续失败几次后报告异常（1–20）</label>
+            <input id="github-failures" type="number" min="1" max="20" step="1" required>
+          </fieldset>
+          <div class="model-actions"><span id="github-feedback" class="feedback" role="status"></span><button id="github-save" type="submit">校验并保存</button></div>
+        </form>
       </section>
     </div>
   </dialog>

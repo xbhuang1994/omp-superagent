@@ -37,7 +37,7 @@ async function until(check: () => boolean, detail: string, timeout = 15_000): Pr
 }
 function config(baseUrl: string): string {
   const path = join(root, 'config.json')
-  writeFileSync(path, JSON.stringify({ stateDir, agentDir, sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: join(root, 'gh'), pollSeconds: 60 } } },
+  writeFileSync(path, JSON.stringify({ stateDir, agentDir, web: { enabled: true, host: '127.0.0.1', port: 0 }, sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: join(root, 'gh'), pollSeconds: 60 } } },
     policy: { sources: { github: { allowed: [{ id: 'alice' }] } } }, eval: { mode: 'auto', model: { provider: 'fixture', model: 'fixture' } },
     executor: { model: { provider: 'fixture', model: 'fixture' }, prepare: `git clone --quiet ${repository} "$OMP_SUPERAGENT_DIR"`, maxWorkers: 1 } }, null, 2))
   return path
@@ -49,7 +49,7 @@ args="$*"
 printf '%s\\n' "$args" >> '${join(root, 'gh-calls.log')}'
 case "$args" in
   "api user") echo '{"login":"agent","id":7}' ;;
-  "api repos/acme/widgets --jq"*) echo '{"name":"acme/widgets","push":true}' ;;
+  "api repos/acme/widgets --jq"*) echo '{"id":11,"name":"acme/widgets","push":true}' ;;
   "api repos/acme/widgets/notifications"*)
     touch '${join(root, 'matched-notifications')}'
     printf 'HTTP/1.1 200 OK\\nX-Poll-Interval: 60\\n\\n'

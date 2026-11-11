@@ -23,6 +23,15 @@ const wechatVerify = document.querySelector('#wechat-verify')
 const wechatCode = document.querySelector('#wechat-code')
 const wechatDisconnect = document.querySelector('#wechat-disconnect')
 const wechatRefresh = document.querySelector('#wechat-refresh')
+const githubForm = document.querySelector('#github-form')
+const githubSave = document.querySelector('#github-save')
+const githubFeedback = document.querySelector('#github-feedback')
+const githubStatus = document.querySelector('#github-status')
+const githubEnabled = document.querySelector('#github-enabled')
+const githubTexts = { repository: document.querySelector('#github-repository'), cli: document.querySelector('#github-cli') }
+const githubNumbers = { pollSeconds: document.querySelector('#github-poll-seconds'), failuresBeforeError: document.querySelector('#github-failures') }
+const githubSwitches = { observeIssues: document.querySelector('#github-observe-issues'), observePulls: document.querySelector('#github-observe-pulls'),
+  observeComments: document.querySelector('#github-observe-comments'), observeCi: document.querySelector('#github-observe-ci') }
 const workerButton = document.querySelector('#worker-button')
 const workerModal = document.querySelector('#worker-modal')
 const workerCount = document.querySelector('#worker-count')
@@ -396,6 +405,48 @@ modelForm.addEventListener('submit', async event => {
   } catch (error) { modelFeedback.textContent = error instanceof Error ? error.message : String(error) }
   finally { modelSave.disabled = false }
 })
+function requireGithubAccount() {
+  for (const input of Object.values(githubTexts)) input.required = githubEnabled.checked
+}
+function renderGithub(data) {
+  githubEnabled.checked = data.enabled
+  for (const [key, input] of Object.entries({ ...githubTexts, ...githubNumbers })) input.value = data.config[key]
+  for (const [key, input] of Object.entries(githubSwitches)) input.checked = data.config[key]
+  requireGithubAccount()
+  const polled = data.health?.state === 'error' ? `；轮询异常：${data.health.detail}`
+    : data.health?.state === 'ready' && data.health.at ? `；最近轮询 ${new Date(data.health.at).toLocaleTimeString()}` : ''
+  githubStatus.textContent = data.connection ? `已连接 ${data.connection.repository}，账号 @${data.connection.account}${polled}` : '未连接'
+}
+async function refreshGithub() {
+  githubSave.disabled = true
+  try {
+    const response = await fetch('/api/settings/github', { cache: 'no-store' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'GitHub 配置读取失败')
+    renderGithub(data)
+  } catch (error) { githubFeedback.textContent = error instanceof Error ? error.message : String(error) }
+  finally { githubSave.disabled = false }
+}
+githubEnabled.addEventListener('change', requireGithubAccount)
+githubForm.addEventListener('submit', async event => {
+  event.preventDefault()
+  githubSave.disabled = true
+  githubFeedback.textContent = githubEnabled.checked ? '正在校验账号与仓库权限…' : ''
+  try {
+    const config = Object.fromEntries([
+      ...Object.entries(githubTexts).map(([key, input]) => [key, input.value.trim()]),
+      ...Object.entries(githubNumbers).map(([key, input]) => [key, Number(input.value)]),
+      ...Object.entries(githubSwitches).map(([key, input]) => [key, input.checked]),
+    ])
+    const response = await fetch('/api/settings/github', { method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: githubEnabled.checked, config }) })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'GitHub 配置保存失败')
+    renderGithub(data)
+    githubFeedback.textContent = data.enabled ? '已连接并保存' : '已保存，GitHub 未连接'
+  } catch (error) { githubFeedback.textContent = error instanceof Error ? error.message : String(error) }
+  finally { githubSave.disabled = false }
+})
 for (const tab of document.querySelectorAll('[data-settings-tab]')) {
   tab.addEventListener('click', () => {
     for (const item of document.querySelectorAll('[data-settings-tab]')) {
@@ -403,8 +454,7 @@ for (const tab of document.querySelectorAll('[data-settings-tab]')) {
       item.classList.toggle('active', active)
       item.setAttribute('aria-selected', String(active))
     }
-    document.querySelector('#settings-models').hidden = tab.dataset.settingsTab !== 'models'
-    document.querySelector('#settings-wechat').hidden = tab.dataset.settingsTab !== 'wechat'
+    for (const page of ['models', 'wechat', 'github']) document.querySelector(`#settings-${page}`).hidden = tab.dataset.settingsTab !== page
     if (tab.dataset.settingsTab === 'wechat') void refreshWeChat()
   })
 }
@@ -439,7 +489,7 @@ async function connectWeChat() {
 }
 settingsButton.addEventListener('click', async () => {
   settingsModal.showModal()
-  await Promise.all([refreshModels(), refreshWeChat()])
+  await Promise.all([refreshModels(), refreshWeChat(), refreshGithub()])
 })
 wechatRefresh.addEventListener('click', connectWeChat)
 wechatDisconnect.addEventListener('click', async () => {
