@@ -65,7 +65,7 @@ bun run build
 
 ## 架构
 
-一句话：**一个常驻"调度员"负责判断和回复，每个任务一个常驻"工人"负责干活，所有状态落盘。**
+一句话：**一个常驻"调度员"负责判断和回复，每个任务一个常驻"工人"负责干活，一个独立"看门狗"负责外部巡检与自愈，所有状态落盘。**
 
 ```mermaid
 flowchart LR
@@ -77,28 +77,30 @@ flowchart LR
   engine --> exec[OMPExecutor]
   exec --> workers[Worker Sessions<br/>每 Ticket 一个 + 独立目录]
   workers -->|持久化 relay 汇报| main
+  wd[Watchdog Session<br/>外部控制回路] -.->|巡检 / 唤醒 / 补推 / 取消卡死任务| engine & exec & main
   main -->|回复| outbox[Outbox]
   outbox --> gh
   outbox --> web
-  main & workers --> jsonl[(OMP JSONL 对话记录)]
+  main & wd & workers --> jsonl[(OMP JSONL 对话记录)]
 ```
 
-**一条请求的旅程**：`Trigger`（收到的消息）→ `Eval`（调度员评估：是否明确请求、发送者是否在白名单）→ `Decision/Mandate`（接受并授权）→ `Ticket`（任务单）→ `Assignment`（派给 Worker）→ Worker 汇报 → `Outbox` 回到原对话。
+**一条请求的旅程**：`Trigger`（收到的消息）→ `Eval`（调度员评估：是否明确请求、发送者是否在白名单）→ `Decision/Mandate`（接受并授权）→ `Ticket`（任务单）→ `Assignment`（派给 Worker）→ Worker 汇报 → `Outbox` 回到原对话；长任务执行与回复全链路受 `Watchdog` 外部控制回路兜底守护。
 
 **关键设计**
 
-- **两类会话**：调度员拿 `read` / `bash` 和应用工具，不开后台任务；Worker 拿 `read` / `bash` / `edit` / `write` / `task` / `wait` 和应用工具，任务结束后它和子代理的工具都会被拦截。
+- **三类隔离会话**：调度员拿 `read` / `bash` 和路由回复工具，不开后台任务；Worker 拿 `read` / `bash` / `edit` / `write` / `task` / `wait` 和汇报工具，任务结束后它和子代理的工具都会被拦截；独立 `Watchdog` 拿 `read` / `bash` 与 `watchdog_inspect` / `watchdog_intervene`，按需巡检与介入修复。
+- **Watchdog 两级自愈回路**：Fast Path 每轮做零 Token 确定性检查（重投丢失队列、检测 `ready`/`completed`/`attention`/`answers` 漏发 Outbox 回复并自动补推 `relay`）；Slow Path 仅在存在长耗时 `working`、无绑定 PR 却静默 `idle` 或健康报错时唤醒模型做语义进展判断——正常推进的长任务绝不误杀，外部进程已完则唤醒交付，死锁任务则精准取消并唤醒恢复。
 - **两份存储**：SQLite（`orchestrator.sqlite`）存领域状态、持久化 Effect 和 Outbox 顺序；JSONL 存对话记录与幂等消息 ID。重启后未完成的任务会续跑，已投递的消息不会重复。
 - **聊天路由**：一条聊天消息不会群发给所有 Worker，调度员只把它接到最匹配的那个 Ticket；需要新活就开新 Ticket；闲聊自己回。
 - **并发**：`WorkerSlots` 限制同时运行数，唤醒优先于新启动，真人追问可临时多占一个名额。
-- **启动/关闭**：`Runtime` 加锁状态目录 → 打开 SQLite → 校验 GitHub → 注册 Source → 恢复调度员与 Ticket → 启动轮询与 Effect；关闭时反向有序释放。
+- **启动/关闭**：`Runtime` 加锁状态目录 → 打开 SQLite → 校验 GitHub → 注册 Source → 恢复调度员与 Ticket → 启动轮询、Effect 与 Watchdog 控制回路；关闭时反向有序释放。
 
 **状态目录**
 
 ```text
 <stateDir>/
 ├── orchestrator.sqlite   领域状态 / Effect / Outbox / 微信绑定
-├── sessions/             调度员与 Worker 的 JSONL
+├── sessions/             调度员、Watchdog 与 Worker 的 JSONL
 ├── omp/                  OMP 认证、模型、缓存（默认 agentDir）
 ├── work/                 每个 Ticket 的工作目录
 ├── attachments/          网页上传的大文件
@@ -111,9 +113,9 @@ flowchart LR
 | --- | --- |
 | `src/cli.ts`, `src/deployment.ts`, `src/policy.ts` | 入口、配置 schema、授权策略 |
 | `src/core/` | 领域引擎：Ticket、Eval、Assignment、回复 |
-| `src/app/` | Runtime、Session、投递、Effect、Web 面板、微信、Worker 视图、模型设置、GitHub 连接、工具 |
+| `src/app/` | Runtime、Session、投递、Effect、Watchdog 看门狗、Web 面板、微信、Worker 视图、模型设置、GitHub 连接、工具 |
 | `src/sources/` | GitHub 与 chat 来源 |
-| `src/executor/omp.ts` | 启动 / 唤醒 / 回收 Worker |
+| `src/executor/omp.ts` | 启动 / 唤醒 / 回收 Worker，后台任务管理与精准取消 |
 | `prompts/`, `skills/`, `web/` | 提示词、技能、前端面板 |
 
 ## 文档
