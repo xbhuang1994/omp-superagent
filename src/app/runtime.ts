@@ -37,7 +37,7 @@ import { ModelSettings } from './model-settings.ts'
 import { GithubConnection } from './github-connection.ts'
 import { ChatSource } from '../sources/chat.ts'
 import { Sidecar } from './sidecar.ts'
-import { Watchdog, watchdogTools, type WatchdogTimings } from './watchdog.ts'
+import { Watchdog, type WatchdogTimings } from './watchdog.ts'
 
 const now = (): string => new Date().toISOString()
 
@@ -61,7 +61,6 @@ export class Runtime implements SourceHost {
   readonly wechat: WeChatBridge
   readonly chat: ChatSource
   readonly masterId: string
-  readonly watchdogId: string
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
   private readonly sourceLinks = new TextCache(200_000)
@@ -108,8 +107,6 @@ export class Runtime implements SourceHost {
       sources.register(githubKind)
       const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
       store.set(KV.runtime.masterId, masterId)
-      const watchdogId = this.watchdogId = store.get(KV.runtime.watchdogId) ?? `watchdog-${key(machine.stateDir)}`
-      store.set(KV.runtime.watchdogId, watchdogId)
       const commands = this.commands = new Commands(() => this.deployment, this.commandEnvironment, this.lifetime)
       const envVariables = () => this.github.deployment ? environmentOf({ deployment: this.github.deployment, sources, settings: store.settings() }) : undefined
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars, envVariables)
@@ -117,14 +114,13 @@ export class Runtime implements SourceHost {
       const links: LinkHost = { store, links: this.sourceLinks, commands, sources, lifetime: this.lifetime }
       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
-      const sessions = this.sessions = new OMPSessions({ store, prompts, effects, machine, masterId, watchdogId, lifetime: this.lifetime,
+      const sessions = this.sessions = new OMPSessions({ store, prompts, effects, machine, masterId, lifetime: this.lifetime,
         closing: () => this.closing(), environment, watchdogEnvironment: envVariables,
         engine: {
           inputsDelivered: (ticketId, assignmentId, inputIds) => this.engine.inputsDelivered(ticketId, assignmentId, inputIds),
           inputsRead: (ticketId, inputIds) => this.engine.inputsRead(ticketId, inputIds),
         },
-        tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket)
-          : sessionId === watchdogId ? watchdogTools(this.watchdog) : mainTools(this.toolHost, sessionId) })
+        tools: (sessionId, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, sessionId) })
       const workers = new WorkerView(store, sessions)
       const chat = this.chat = new ChatSource({ sessions, masterId, receive: trigger => this.receive(trigger),
         deliverWeChat: (id, text, userId) => this.wechat.deliver(id, text, userId) })
@@ -167,7 +163,7 @@ export class Runtime implements SourceHost {
       })
       this.sidecar = new Sidecar({ store, engine, executor: this.executor, effects, sessions, machine,
         paused: () => this.paused(), closing: () => this.closing(), sendReplies: () => outbox.sent() })
-      this.watchdog = new Watchdog({ store, engine, executor: this.executor, effects, sessions, machine, masterId, watchdogId,
+      this.watchdog = new Watchdog({ store, engine, executor: this.executor, effects, sessions, machine, masterId,
         health: this.board.claim('watchdog'), lifetime: this.lifetime, board: () => this.board.all,
         configured: () => this.configured(), closing: () => this.closing(), paused: () => this.paused(),
         requestPass: () => { passes.request() } }, options)

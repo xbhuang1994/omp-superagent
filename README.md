@@ -81,7 +81,7 @@ flowchart LR
   main -->|回复| outbox[Outbox]
   outbox --> gh
   outbox --> web
-  main & wd & workers --> jsonl[(OMP JSONL 对话记录)]
+  main & workers --> jsonl[(OMP JSONL 对话记录)]
 ```
 
 **一条请求的旅程**：`Trigger`（收到的消息）→ `Eval`（调度员评估：是否明确请求、发送者是否在白名单）→ `Decision/Mandate`（接受并授权）→ `Ticket`（任务单）→ `Assignment`（派给 Worker）→ Worker 汇报 → `Outbox` 回到原对话；长任务执行与回复全链路受 `Watchdog` 外部控制回路兜底守护。
@@ -90,7 +90,7 @@ flowchart LR
 
 - **四类分工会话与高缓存命中**：调度员拿 `read` / `bash` 与路由回复工具；Worker 拿完整执行与子代理工具（100k 水位自动压缩 + 活跃期经济保活 + 全员共享 100% 静态系统前缀）；轻量无状态 `/btw` **Sidecar** 仅拿只读 `read` 与共享前缀缓存秒回进度/总结/对比追问（零唤醒重型 Worker）；独立 **Watchdog** 定时巡检与自愈。
 - **极速异步与单跳直达**：微信连发消息经 1.8s 滑动微批聚合成单轮路由；UI 消息仅落盘不污染模型上下文；重活 `attach` 当轮秒回确认并打包全部待办 Input；Worker / Sidecar 支持 `direct_reply` 直推 Outbox 省去调度员二次中转。
-- **Watchdog 两级自愈回路**：Fast Path 每轮做零 Token 确定性检查（重投丢失队列、检测 `ready`/`completed`/`attention`/`answers` 漏发 Outbox 回复并自动补推 `relay`）；Slow Path 仅在存在长耗时 `working`、无绑定 PR 却静默 `idle` 或健康报错时唤醒模型做语义进展判断——正常推进的长任务绝不误杀，外部进程已完则唤醒交付，死锁任务则精准取消并唤醒恢复。
+- **Watchdog 零 Token 增量快筛 + 预采样无状态巡检**：每轮先在代码层做 `<5ms` 确定性修复与 `/proc` 子进程树 CPU ticks + 工作目录文件增量采样——正常推进的长任务 **0 次模型调用、0 Token 放行**；仅当连续零增量停滞、无绑定 PR 的 `idle` 工单脱离进程结束或遇到瞬态错误时，一次性预打包日志尾部、进程树与最近文件拉起无状态内存 Watchdog 会话（`low` 思考档位 + 静态前缀缓存），1~2 步内完成唤醒或精准取消卡死后台任务。
 - **两份存储**：SQLite（`orchestrator.sqlite`）存领域状态、持久化 Effect 和 Outbox 顺序；JSONL 存对话记录与幂等消息 ID。重启后未完成的任务会续跑，已投递的消息不会重复。
 - **并发**：`WorkerSlots` 限制同时运行数，唤醒优先于新启动，真人追问可临时多占一个名额。
 - **启动/关闭**：`Runtime` 加锁状态目录 → 打开 SQLite → 校验 GitHub → 注册 Source → 恢复调度员与 Ticket → 启动轮询、Effect 与 Watchdog 控制回路；关闭时反向有序释放。
@@ -100,7 +100,7 @@ flowchart LR
 ```text
 <stateDir>/
 ├── orchestrator.sqlite   领域状态 / Effect / Outbox / 微信绑定
-├── sessions/             调度员、Watchdog 与 Worker 的 JSONL
+├── sessions/             调度员与每个 Worker 的 JSONL（Sidecar 与 Watchdog 纯内存无状态）
 ├── omp/                  OMP 认证、模型、缓存（默认 agentDir）
 ├── work/                 每个 Ticket 的工作目录
 ├── attachments/          网页上传的大文件

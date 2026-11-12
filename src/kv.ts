@@ -31,8 +31,8 @@ export const KV = {
   prompts: { revision: record<number>('prompt-revision'), version: family<PromptVersion, [revision: number]>('prompt-version:'),
     /** The built-in text of a prompt part an override was edited from, by its `base`, which shows what an upgrade changed. */
     builtIn: family<string, [base: string]>('prompt-built-in:') },
-  /** Runtime: the main and Watchdog Session IDs, and the startup JSON's models and GitHub Source as last started with. */
-  runtime: { masterId: record<string>('master-id'), watchdogId: record<string>('watchdog-id'),
+  /** Runtime: the main Session ID, and the startup JSON's models and GitHub Source as last started with. */
+  runtime: { masterId: record<string>('master-id'),
     startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null; advisor?: RoleModel | null }>('startup-models'),
     startupGithub: record<{ enabled: boolean; config: Record<string, unknown> } | null>('startup-github') },
   /** Sessions: OMP JSONL file by durable external alias. */

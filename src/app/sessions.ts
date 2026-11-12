@@ -115,7 +115,6 @@ export interface OMPSessionsHost {
   readonly engine: Pick<EngineForExecutor, 'inputsDelivered' | 'inputsRead'>
   readonly machine: Pick<Machine, 'stateDir' | 'agentDir'>
   readonly masterId: string
-  readonly watchdogId?: string
   readonly lifetime: AbortSignal
   closing(): boolean
   environment(ticket: Ticket): Variable[]
@@ -180,9 +179,8 @@ export class OMPSessions {
     for (const [sessionId, session] of this.loaded) {
       if (session.isDisposed) continue
       const isMain = sessionId === this.host.masterId
-      const isWatchdog = this.host.watchdogId !== undefined && sessionId === this.host.watchdogId
-      if (role === 'orchestrator' && !isMain && !(isWatchdog && selection)) continue
-      if ((role === 'worker' || role === 'advisor') && (isMain || isWatchdog)) continue
+      if (role === 'orchestrator' && !isMain) continue
+      if ((role === 'worker' || role === 'advisor') && isMain) continue
       if (role === 'advisor') {
         if (selection) session.settings.overrideModelRoles({ advisor: roleSelector(selection) })
         session.setAdvisorEnabled(!!selection)
@@ -201,7 +199,7 @@ export class OMPSessions {
     if (selection && !this.modelRegistry.find(selection.provider, selection.model)) throw new Error(`Unknown OMP model: ${selection.provider}/${selection.model}`)
   }
 
-  async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'watchdog', ticket?: Ticket): Promise<AgentSession> {
+  async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
     await this.ready
     const current = this.loaded.get(sessionId)
     if (current) return current
@@ -214,7 +212,7 @@ export class OMPSessions {
     return opening
   }
 
-  private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker' | 'watchdog', ticket?: Ticket): Promise<AgentSession> {
+  private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
     if (this.host.closing()) throw new Error('omp-superagent is stopping')
     if (role === 'worker' && (!ticket || !liveTicket(ticket))) throw new Error('Worker Session needs a live Ticket')
     const sessionDir = join(this.host.machine.stateDir, 'sessions')
@@ -226,8 +224,7 @@ export class OMPSessions {
     } else sessionManager = SessionManager.create(cwd, sessionDir)
 
     const settings = this.host.store.settings()
-    const configured = role === 'orchestrator' ? settings.eval.model
-      : role === 'watchdog' ? (settings.eval.model ?? settings.executor.model) : settings.executor.model
+    const configured = role === 'orchestrator' ? settings.eval.model : settings.executor.model
     const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
     if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
     // RoleModelSchema admits exactly OMP's selector strings; its packages declare them through incompatible enum aliases.
@@ -235,9 +232,7 @@ export class OMPSessions {
     const version = this.host.prompts.current()
     // Keep every role's system prompt byte-identical across tickets so all workers share one provider prefix cache;
     // per-ticket directory, worktree name and mandate arrive in the initial assignment message instead.
-    const customSystemPrompt = role === 'watchdog'
-      ? `${watchdogPrompt}\n\n${environmentSection(version.config, this.host.watchdogEnvironment?.())}`
-      : this.host.prompts.compose(version.config, role, this.host.watchdogEnvironment?.())
+    const customSystemPrompt = this.host.prompts.compose(version.config, role, this.host.watchdogEnvironment?.())
     const tools = this.host.tools(sessionId, ticket)
     const toolNames = [...role === 'worker' ? [...WORK_TOOLS, 'task', 'wait'] : ['read', 'bash'], ...tools.map(tool => tool.name)]
     // Subagents inherit these prepared extensions, so the guard covers their tool calls too.
@@ -463,6 +458,67 @@ export class OMPSessions {
       await session.dispose()
     }
   }
+  /** Run one stateless, in-memory Watchdog inspection turn with low thinking effort and a pinned static prefix cache key. */
+  async runWatchdog(promptText: string, tools: Tool[], timeoutMs = 120_000): Promise<string> {
+    await this.ready
+    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    const settings = this.host.store.settings()
+    const configured = settings.eval.model ?? settings.executor.model
+    const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
+    if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
+    const thinkingLevel = 'low' as never
+    const version = this.host.prompts.current()
+    const customSystemPrompt = `${watchdogPrompt}\n\n${environmentSection(version.config, this.host.watchdogEnvironment?.())}`
+    const cwd = this.host.machine.stateDir
+    const { session } = await createAgentSession({
+      cwd,
+      agentDir: this.host.machine.agentDir,
+      authStorage: this.authStorage,
+      modelRegistry: this.modelRegistry,
+      agentRegistry: new AgentRegistry(),
+      settings: Settings.isolated(ORCHESTRATOR_SETTINGS),
+      sessionManager: SessionManager.inMemory(cwd),
+      customSystemPrompt,
+      noContextFiles: true,
+      promptTemplates: [],
+      slashCommands: [],
+      rules: [],
+      skills: [],
+      customTools: tools.map(ompTool),
+      toolNames: ['read', 'bash', ...tools.map(item => item.name)],
+      restrictToolNames: true,
+      allowRestrictedCustomTools: true,
+      extensions: [],
+      bindProcessState: false,
+      hasUI: false,
+      cacheWarming: false,
+      enableMCP: false,
+      enableLsp: false,
+      disableExtensionDiscovery: true,
+      ...model ? { model, thinkingLevel } : {},
+    })
+    session.agent.promptCacheKey = `watchdog-${key(this.host.machine.stateDir)}`
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>()
+    const timer = setTimeout(() => { reject(new Error(`Watchdog turn timed out after ${timeoutMs}ms`)) }, timeoutMs)
+    const onAbort = () => { resolve() }
+    this.host.lifetime.addEventListener('abort', onAbort, { once: true })
+    const unsubscribe = session.subscribe(event => {
+      if (event.type === 'agent_end' && event.isTerminal !== false) resolve()
+    })
+    try {
+      await session.sendCustomMessage({ customType: 'omp-superagent-watchdog', content: promptText, display: false, attribution: 'agent' },
+        { triggerTurn: true, deliverAs: 'steer' })
+      await ended
+      return session.getLastAssistantText()?.trim() ?? ''
+    } finally {
+      clearTimeout(timer)
+      this.host.lifetime.removeEventListener('abort', onAbort)
+      unsubscribe()
+      session.beginDispose()
+      await session.dispose()
+    }
+  }
+
 
 
   async stop(sessionId: string, reason: string): Promise<void> {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -25,17 +25,19 @@ async function post(runtime: Runtime, text: string, messageId: string): Promise<
 }
 const FAST_WATCHDOG: WatchdogTimings = {
   intervalMs: 600_000,
-  longTaskMs: 20,
+  stallMs: 40,
+  cpuOnlySilenceMs: 120,
+  longTaskMs: 40,
   idleGraceMs: 20,
   idleRecheckMs: 20,
   unrepliedGraceMs: 20,
   turnTimeoutMs: 15_000,
 }
 
-it('makes zero LLM calls on a healthy idle system, leaves progressing long jobs alone, and cancels+wakes hung jobs', async () => {
+it('makes zero LLM calls while long jobs produce delta, then pre-samples and cancels hung jobs in one stateless turn', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'omp-watchdog-long-'))
-  let triggerId = '', ticketId = '', jobHung = false
-  let watchdogPatrols = 0
+  let triggerId = '', ticketId = ''
+  let watchdogPatrols = 0, lastPatrolPayload = ''
   const provider = await startOmpOpenAIServer(request => {
     const tools = request.tools?.map(tool => tool.function?.name ?? '') ?? []
     const isWatchdog = tools.includes('watchdog_intervene')
@@ -46,27 +48,27 @@ it('makes zero LLM calls on a healthy idle system, leaves progressing long jobs 
     if (isWatchdog) {
       if (request.messages.at(-1)?.role !== 'tool') {
         watchdogPatrols++
-        return { toolCalls: [{ name: 'watchdog_inspect', arguments: { ticket_id: ticketId } }] }
+        lastPatrolPayload = incoming
+        const match = /"id":"(bg_\d+)"/.exec(allText)
+        return { toolCalls: [{ name: 'watchdog_intervene', arguments: {
+          action: 'cancel_job', ticket_id: ticketId, job_id: match?.[1] ?? 'bg_1', message: 'Process deadlocked with zero progress',
+        } }] }
       }
-      if (allText.includes('"intervened":true') || allText.includes('"cancelled":true')) return { content: 'Intervened on hung job.' }
-      if (!jobHung) return { content: 'Backtest job is making steady progress; leaving it untouched.' }
-      const match = /"id":"(bg_\d+)"/.exec(allText)
-      return { toolCalls: [{ name: 'watchdog_intervene', arguments: {
-        action: 'cancel_job', ticket_id: ticketId, job_id: match?.[1] ?? 'bg_1', message: 'Process deadlocked with zero progress',
-      } }] }
+      return { content: 'Done.' }
     }
     if (isWorker) {
       if (allText.includes('"reported":true')) return { content: 'Done.' }
       if (allText.includes('Process deadlocked with zero progress')) {
-        return { toolCalls: [{ name: 'orchestrator_report', arguments: { state: 'ready', summary: 'Recovered after Watchdog stopped hung job.' } }] }
+        return { toolCalls: [{ name: 'orchestrator_report', arguments: { state: 'ready', summary: 'Recovered after Watchdog stopped hung job.',
+          direct_reply: '任务已在看门狗介入恢复后完成。' } }] }
       }
       if (request.messages.at(-1)?.role === 'tool') return { content: 'Waiting on background job.' }
-      return { toolCalls: [{ name: 'bash', arguments: { command: 'until [ -f never.flag ]; do sleep 0.05; done', async: true } }] }
+      return { toolCalls: [{ name: 'bash', arguments: {
+        command: 'i=0; until [ -f never.flag ]; do if [ ! -f freeze.flag ]; then i=$((i+1)); echo "step $i" >> progress.log; fi; sleep 0.015; done',
+        async: true,
+      } }] }
     }
     if (request.messages.at(-1)?.role === 'tool') return { content: 'Done.' }
-    if (incoming.includes('worker_report')) {
-      return { toolCalls: [{ name: 'orchestrator_reply', arguments: { ticket_id: ticketId, purpose: 'result', text: '任务已在看门狗介入恢复后完成。' } }] }
-    }
     return { toolCalls: [{ name: 'orchestrator_route', arguments: { decisions: [{ kind: 'accept', trigger_id: triggerId,
       title: 'Long job supervision', worktree_name: 'long-job-supervision', acknowledgement: '已开始执行。' }] } }] }
   })
@@ -88,22 +90,35 @@ it('makes zero LLM calls on a healthy idle system, leaves progressing long jobs 
       expect(session?.asyncJobManager?.getRunningJobs()).toHaveLength(1)
     })
 
-    // First patrol: job is healthy -> Watchdog inspects and leaves bg_1 running!
-    await sleep(30)
+    // Progressing job: progress.log keeps growing -> multiple Watchdog ticks make ZERO LLM calls!
+    await sleep(35)
     await runtime.watchdog.tick()
-    expect(watchdogPatrols).toBe(1)
+    await sleep(35)
+    await runtime.watchdog.tick()
+    expect(watchdogPatrols).toBe(0)
     expect(runtime.executor.runningJobs(ticketId)).toHaveLength(1)
-    expect(runtime.store.tickets.get(ticketId)?.ended).toBeUndefined()
 
-    // Second patrol: job is now judged hung -> Watchdog cancels bg_1 and wakes worker -> ticket completes & replies!
-    jobHung = true
+    // Freeze output and wait past stallMs -> Watchdog wakes once with pre-sampled log tail and cancels bg_1 directly!
+    const workDir = runtime.store.tickets.get(ticketId)!.execution!.directory
+    writeFileSync(join(workDir, 'freeze.flag'), '1')
     await sleep(30)
-    await runtime.watchdog.tick()
+    await runtime.watchdog.tick() // Captures frozen baseline
+    await sleep(55)
+    await runtime.watchdog.tick() // Detects zero file + zero CPU delta past stallMs -> stateless LLM turn!
+
     await vi.waitFor(async () => {
       const view = await (await fetch(`${runtime.web.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
       expect(view.messages.some(message => message.role === 'assistant' && message.text === '任务已在看门狗介入恢复后完成。')).toBe(true)
     }, { timeout: 15_000 })
+    expect(watchdogPatrols).toBe(1)
+    expect(lastPatrolPayload).toContain('progress.log')
+    expect(lastPatrolPayload).toContain('step ')
+    expect(lastPatrolPayload).toContain('"process_tree"')
     expect(runtime.store.tickets.get(ticketId)?.ended?.outcome).toBe('completed')
+
+    // Stateless Watchdog leaves zero Watchdog .jsonl files on disk (only orchestrator + 1 worker).
+    const jsonls = readdirSync(join(dir, 'sessions')).filter(name => name.endsWith('.jsonl'))
+    expect(jsonls).toHaveLength(2)
   } finally {
     await runtime.stop()
     await provider.close()
@@ -111,9 +126,9 @@ it('makes zero LLM calls on a healthy idle system, leaves progressing long jobs 
   }
 })
 
-it('wakes a stranded idle worker whose detached task finished and heals missed Outbox replies', async () => {
+it('pre-samples finished log tail to wake a stranded idle worker in one hop and heals missed Outbox replies', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'omp-watchdog-idle-'))
-  let triggerId = '', ticketId = '', dropFirstReply = true
+  let triggerId = '', ticketId = '', dropFirstReply = true, watchdogCalls = 0
   const provider = await startOmpOpenAIServer(request => {
     const tools = request.tools?.map(tool => tool.function?.name ?? '') ?? []
     const isWatchdog = tools.includes('watchdog_intervene')
@@ -122,25 +137,25 @@ it('wakes a stranded idle worker whose detached task finished and heals missed O
     const allText = JSON.stringify(request.messages)
 
     if (isWatchdog) {
+      watchdogCalls++
       if (request.messages.at(-1)?.role !== 'tool') {
-        return { toolCalls: [{ name: 'watchdog_inspect', arguments: { ticket_id: ticketId } }] }
+        expect(incoming).toContain('stage5.log')
+        expect(incoming).toContain('EXIT 0')
+        return { toolCalls: [{ name: 'watchdog_intervene', arguments: {
+          action: 'wake_worker', ticket_id: ticketId, message: 'stage5.log shows EXIT 0 while worker is idle; verify output and call orchestrator_report ready.',
+        } }] }
       }
-      if (allText.includes('"woken":true')) return { content: 'Woke stranded worker.' }
-      return { toolCalls: [{ name: 'watchdog_intervene', arguments: {
-        action: 'wake_worker', ticket_id: ticketId, message: 'stage5.log shows EXIT 0 while worker is idle; verify output and call orchestrator_report ready.',
-      } }] }
+      return { content: 'Done.' }
     }
     if (isWorker) {
       if (allText.includes('"reported":true')) return { content: 'Done.' }
       if (allText.includes('[Watchdog] stage5.log shows EXIT 0')) {
         return { toolCalls: [{ name: 'orchestrator_report', arguments: { state: 'ready', summary: 'Detached backtest verified and curve ready.' } }] }
       }
-      // Simulate worker ending its turn without a running OMP job and without orchestrator_report.
       return { content: 'Started detached run; waiting.' }
     }
     if (request.messages.at(-1)?.role === 'tool') return { content: 'Done.' }
     if (incoming.includes('worker_report') && incoming.includes('"state":"ready"')) {
-      // Simulate orchestrator missing the reply on the first relay, then succeeding when Watchdog re-relays.
       if (dropFirstReply) {
         dropFirstReply = false
         return { content: ' distracted turn without orchestrator_reply ' }
@@ -165,21 +180,23 @@ it('wakes a stranded idle worker whose detached task finished and heals missed O
     const workDir = runtime.store.tickets.get(ticketId)!.execution!.directory
     writeFileSync(join(workDir, 'stage5.log'), 'EXIT 0\n')
 
-    // Patrol 1: Watchdog detects stranded idle worker, inspects it, and wakes it -> worker reports ready (first orchestrator turn misses reply).
+    // Patrol 1: Watchdog sees stage5.log tail inline and wakes worker directly in 2 LLM requests (intervene + Done).
     await sleep(30)
     await runtime.watchdog.tick()
     await vi.waitFor(() => {
       expect(runtime.store.tickets.get(ticketId)?.ended?.outcome).toBe('completed')
       expect(runtime.sessions.get(runtime.masterId)?.isStreaming).toBe(false)
     })
+    expect(watchdogCalls).toBe(2)
 
-    // Patrol 2: Watchdog deterministic fast-path detects completed ticket missing its Outbox reply and re-relays -> reply delivered!
+    // Patrol 2: Watchdog deterministic fast-path heals missed Outbox reply with ZERO extra Watchdog LLM calls!
     await sleep(30)
     await runtime.watchdog.tick()
     await vi.waitFor(async () => {
       const view = await (await fetch(`${runtime.web.url}api/messages`)).json() as { messages: { role: string; text: string }[] }
       expect(view.messages.some(message => message.role === 'assistant' && message.text === '净值曲线已生成并交付。')).toBe(true)
     }, { timeout: 15_000 })
+    expect(watchdogCalls).toBe(2)
   } finally {
     await runtime.stop()
     await provider.close()
