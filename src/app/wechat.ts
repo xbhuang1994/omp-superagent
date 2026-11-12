@@ -189,7 +189,9 @@ export class WeChatBridge {
           this.host.store.set(KV.wechat.cursor, cursor)
         }
         failures = 0
-        if (this.state.state !== 'connected') this.state = { state: 'connected', message: '微信已连接。' }
+        if (this.state.state !== 'connected' || this.state.message.startsWith('微信接收暂时失败')) {
+          this.state = { state: 'connected', message: '微信已连接。' }
+        }
       } catch (error) {
         if (signal.aborted) return
         failures++

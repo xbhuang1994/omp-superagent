@@ -36,6 +36,7 @@ import { WorkerView } from './workers.ts'
 import { ModelSettings } from './model-settings.ts'
 import { GithubConnection } from './github-connection.ts'
 import { ChatSource } from '../sources/chat.ts'
+import { Sidecar } from './sidecar.ts'
 import { Watchdog, watchdogTools, type WatchdogTimings } from './watchdog.ts'
 
 const now = (): string => new Date().toISOString()
@@ -54,6 +55,7 @@ export class Runtime implements SourceHost {
   readonly engine: Engine
   readonly passes: Passes
   readonly watchdog: Watchdog
+  readonly sidecar: Sidecar
   readonly ready: Promise<void>
   readonly web: WebPanel
   readonly wechat: WeChatBridge
@@ -76,7 +78,8 @@ export class Runtime implements SourceHost {
   /** The startup JSON's models and GitHub Source as written, before a panel choice replaces them. */
   private readonly written: { models: { eval: RoleModel | null; executor: RoleModel | null; advisor: RoleModel | null }; github: SettingsValue['sources'][string] | null }
 
-  constructor(readonly machine: Machine, startup: SettingsValue = SettingsSchema.parse({}), watchdogTimings?: WatchdogTimings) {
+  constructor(readonly machine: Machine, startup: SettingsValue = SettingsSchema.parse({}),
+    options?: WatchdogTimings & { wechatBurstMs?: number; webBurstMs?: number }) {
     this.startup = structuredClone(SettingsSchema.parse({ paused: startup.paused, sources: startup.sources, policy: startup.policy, eval: startup.eval, executor: startup.executor }))
     mkdirSync(machine.stateDir, { recursive: true, mode: 0o700 })
     const compromised = (error: Error) => { this.runtimeHealth.set({ state: 'error', detail: error.message }); this.stopped.abort() }
@@ -155,18 +158,25 @@ export class Runtime implements SourceHost {
         } })
       const evals = this.board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
       const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }
-      const passes = this.passes = new Passes({ engine: { receive: trigger => engine.receive(trigger), evaluateDue }, effects,
-        health: this.runtimeHealth, lifetime: this.lifetime, configured: () => this.configured(), closing: () => this.closing() })
+      const passes = this.passes = new Passes({
+        engine: { receive: trigger => engine.receive(trigger), evaluateDue },
+        effects, health: this.runtimeHealth, lifetime: this.lifetime,
+        configured: () => this.configured(), closing: () => this.closing(),
+        burstDelayMs: trigger => trigger.source === 'chat'
+          ? (trigger.meta.surface === 'wechat' ? (options?.wechatBurstMs ?? 1800) : (options?.webBurstMs ?? 0)) : 0,
+      })
+      this.sidecar = new Sidecar({ store, engine, executor: this.executor, effects, sessions, machine,
+        paused: () => this.paused(), closing: () => this.closing(), sendReplies: () => outbox.sent() })
       this.watchdog = new Watchdog({ store, engine, executor: this.executor, effects, sessions, machine, masterId, watchdogId,
         health: this.board.claim('watchdog'), lifetime: this.lifetime, board: () => this.board.all,
         configured: () => this.configured(), closing: () => this.closing(), paused: () => this.paused(),
-        requestPass: () => { passes.request() } }, watchdogTimings)
+        requestPass: () => { passes.request() } }, options)
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), commands, masterId, sessions, sourceLink: link }
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return runtime.deployment }, configured: () => this.configured(), receive: trigger => passes.receive(trigger) }
       this.toolHost = { logger: { warn: message => console.warn(message) }, engine, store, sessions, assessor: this.assessor, resources,
         get github() { return runtime.github.deployment ? runtime.context(githubKind) : undefined }, requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
-        get wechat() { return runtime.wechat },
+        get wechat() { return runtime.wechat }, enqueueSidecar: payload => { this.sidecar.enqueue(payload) },
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
       this.ready = this.initialize().catch(async error => { await this.stop(); throw error })
     } catch (error) {

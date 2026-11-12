@@ -88,10 +88,10 @@ flowchart LR
 
 **关键设计**
 
-- **三类隔离会话**：调度员拿 `read` / `bash` 和路由回复工具，不开后台任务；Worker 拿 `read` / `bash` / `edit` / `write` / `task` / `wait` 和汇报工具，任务结束后它和子代理的工具都会被拦截；独立 `Watchdog` 拿 `read` / `bash` 与 `watchdog_inspect` / `watchdog_intervene`，按需巡检与介入修复。
+- **四类分工会话与高缓存命中**：调度员拿 `read` / `bash` 与路由回复工具；Worker 拿完整执行与子代理工具（100k 水位自动压缩 + 活跃期经济保活 + 全员共享 100% 静态系统前缀）；轻量无状态 `/btw` **Sidecar** 仅拿只读 `read` 与共享前缀缓存秒回进度/总结/对比追问（零唤醒重型 Worker）；独立 **Watchdog** 定时巡检与自愈。
+- **极速异步与单跳直达**：微信连发消息经 1.8s 滑动微批聚合成单轮路由；UI 消息仅落盘不污染模型上下文；重活 `attach` 当轮秒回确认并打包全部待办 Input；Worker / Sidecar 支持 `direct_reply` 直推 Outbox 省去调度员二次中转。
 - **Watchdog 两级自愈回路**：Fast Path 每轮做零 Token 确定性检查（重投丢失队列、检测 `ready`/`completed`/`attention`/`answers` 漏发 Outbox 回复并自动补推 `relay`）；Slow Path 仅在存在长耗时 `working`、无绑定 PR 却静默 `idle` 或健康报错时唤醒模型做语义进展判断——正常推进的长任务绝不误杀，外部进程已完则唤醒交付，死锁任务则精准取消并唤醒恢复。
 - **两份存储**：SQLite（`orchestrator.sqlite`）存领域状态、持久化 Effect 和 Outbox 顺序；JSONL 存对话记录与幂等消息 ID。重启后未完成的任务会续跑，已投递的消息不会重复。
-- **聊天路由**：一条聊天消息不会群发给所有 Worker，调度员只把它接到最匹配的那个 Ticket；需要新活就开新 Ticket；闲聊自己回。
 - **并发**：`WorkerSlots` 限制同时运行数，唤醒优先于新启动，真人追问可临时多占一个名额。
 - **启动/关闭**：`Runtime` 加锁状态目录 → 打开 SQLite → 校验 GitHub → 注册 Source → 恢复调度员与 Ticket → 启动轮询、Effect 与 Watchdog 控制回路；关闭时反向有序释放。
 
@@ -113,7 +113,7 @@ flowchart LR
 | --- | --- |
 | `src/cli.ts`, `src/deployment.ts`, `src/policy.ts` | 入口、配置 schema、授权策略 |
 | `src/core/` | 领域引擎：Ticket、Eval、Assignment、回复 |
-| `src/app/` | Runtime、Session、投递、Effect、Watchdog 看门狗、Web 面板、微信、Worker 视图、模型设置、GitHub 连接、工具 |
+| `src/app/` | Runtime、Session、投递、Effect、Sidecar 旁路快答、Watchdog 看门狗、Web 面板、微信、Worker 视图、模型设置、GitHub 连接、工具 |
 | `src/sources/` | GitHub 与 chat 来源 |
 | `src/executor/omp.ts` | 启动 / 唤醒 / 回收 Worker，后台任务管理与精准取消 |
 | `prompts/`, `skills/`, `web/` | 提示词、技能、前端面板 |

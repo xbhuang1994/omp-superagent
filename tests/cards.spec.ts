@@ -79,7 +79,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ['The main Session has no tool that messages a worker', 'handoff-orchestrator', [], ['ask the worker']],
   ['The main Session has no tool that messages a worker', 'skill github', [], ['orchestrator forwarding']],
   ['A ticket owner\'s decision is a structured attention request, not progress', 'handoff',
-    ['Ticket handoff contract:', 'An empty final preserves a successful report', 'budget errors alone do not authorize an IM message']],
+    ['Ticket handoff contract:', 'budget errors alone do not authorize an IM message']],
   ['An Executor asks through human_action and clears the question explicitly', 'handoff-worker', ['human_action:null or a ready report clears it', 'state may remain progress']],
   ['The main Session investigates nothing outside an assessment', 'dispatch', ['Outside proactive assessment, do not follow context references']],
   ['A UI change carries before-and-after evidence, as a delivery requirement the team can change', 'team/delivery',

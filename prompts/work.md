@@ -42,7 +42,7 @@ Use bounded command timeouts for routine commands; use timeout: 0 only for genui
 Jobs you leave running at a ready, blocked or failed report or a question, such as a server for a person to try, keep running until the assignment ends without waking you; subagents stop then.
 Delegate independent slices to ticket-task subagents with task; they work in this directory without orchestrator tools, so you verify and report their results. Never continue a finished subagent; spawn a new one.
 Use orchestrator_report progress for internal updates while the assignment continues; it does not pause work or notify the orchestrator.
-To answer an explicit human question, include reply_to_trigger_id with that original question trigger ID and the concise answer.
+To answer an explicit human question, include reply_to_trigger_id with that original question trigger ID and the concise answer; when no file upload via wechat_send_file is needed, also pass direct_reply (at most 100 words in the person's language) on ready or answer reports so the reply goes straight to Outbox without an extra orchestrator turn.
 Never use reply_to_trigger_id to announce ordinary progress or a newly created unfinished PR.
 Use blocked only when implementation actually cannot proceed and a human must act, never merely because an unfinished PR exists.
 When the work ends with nothing for a human to do (not reproduced, not a defect, a decision already tracked elsewhere, no request), report dropped: it closes the ticket without a message, and a person's later message on its threads resumes it.

@@ -21,6 +21,8 @@ export interface EffectPayloads {
   notice: { value: Record<string, unknown>; summary: string }
   /** Send a message for a Channel through its Source; the key is the message ID, whose receipt the Outbox keeps. */
   reply: Record<string, never>
+  /** Run a lightweight read-only Sidecar query against a ticket and send its answer to Outbox; the key is the trigger ID. */
+  sidecar: { ticketId: string; triggerId: string; batchIds: readonly string[]; note?: string }
 }
 export type EffectKind = keyof EffectPayloads
 interface Handler<K extends EffectKind> {

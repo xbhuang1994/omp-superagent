@@ -32,8 +32,8 @@ function referencedTickets(host: LinkHost, trigger: Trigger, known: readonly Tic
   for (const ticket of known) ids.delete(ticket.id)
   return [...ids].flatMap(id => host.store.tickets.get(id) ?? []).slice(0, 4)
 }
-/** Chat threads keep every ticket subscribed, so a chat candidate lists more of them than another Source's. */
-const CHAT_RELATED = 20
+/** Chat candidate cards inline open and newest ended tickets up to a cache-friendly cap; older ones stay behind `orchestrator_read`. */
+const CHAT_RELATED = 8
 /** Workers that handed one message back before no open ticket is taken to own it: it is new work. */
 const MISS_LIMIT = 3
 /** Builds the main Session's candidate card with routing metadata, handback history, and related or referenced tickets. */

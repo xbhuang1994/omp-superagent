@@ -10,6 +10,7 @@ export interface PassesHost {
   readonly lifetime: AbortSignal
   configured(): boolean
   closing(): boolean
+  burstDelayMs?(trigger: Trigger): number
 }
 
 const now = (): string => new Date().toISOString()
@@ -20,21 +21,47 @@ const now = (): string => new Date().toISOString()
  * Updates the runtime `HealthEntry` when a pass fails and clears the error once a subsequent pass succeeds.
  */
 export class Passes {
-  private timer?: ReturnType<typeof setInterval>
+  private timer?: NodeJS.Timeout
+  private burstTimer?: NodeJS.Timeout
+  private burstSince?: number
   private stopped = false
   private pumping?: Promise<void>
   private pumpAgain?: Promise<void>
   constructor(private readonly host: PassesHost) {}
-  start(): void { if (!this.stopped) this.timer = setInterval(() => { this.request() }, 2000) }
+  start(): void { if (!this.stopped) this.timer = setInterval(() => { if (!this.burstTimer) this.request() }, 2000) }
   stop(): Promise<unknown> {
     this.stopped = true
     clearInterval(this.timer)
+    clearTimeout(this.burstTimer)
+    this.burstTimer = undefined
+    this.burstSince = undefined
     return Promise.allSettled([this.pumping, this.pumpAgain])
   }
   receive(trigger: Trigger): ReceiveResult {
     if (this.host.closing()) throw new Error('Orchestrator is stopping')
     const result = this.host.engine.receive(trigger)
-    if (result === 'stored') this.request()
+    if (result !== 'stored') return result
+    const delay = this.host.burstDelayMs?.(trigger) ?? 0
+    if (delay <= 0) {
+      this.request()
+      return result
+    }
+    const nowMs = Date.now()
+    this.burstSince ??= nowMs
+    const remainingCap = Math.max(0, 4000 - (nowMs - this.burstSince))
+    const waitMs = Math.min(delay, remainingCap)
+    clearTimeout(this.burstTimer)
+    if (waitMs <= 0) {
+      this.burstTimer = undefined
+      this.burstSince = undefined
+      this.request()
+      return result
+    }
+    this.burstTimer = setTimeout(() => {
+      this.burstTimer = undefined
+      this.burstSince = undefined
+      if (!this.stopped) this.request()
+    }, waitMs)
     return result
   }
   request(): void {
@@ -54,6 +81,11 @@ export class Passes {
   }
   /** Run one pass, coalescing concurrent callers into a single follow-up pass. */
   async pump(): Promise<void> {
+    if (this.burstTimer) {
+      clearTimeout(this.burstTimer)
+      this.burstTimer = undefined
+      this.burstSince = undefined
+    }
     // Do not assess, dispatch, or send while waiting for setup; queued work waits for the restart that completes setup.
     if (!this.host.configured() || this.host.closing()) return
     if (!this.pumping) return this.pumping = this.pumpOnce().finally(() => { this.pumping = undefined })

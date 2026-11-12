@@ -6,7 +6,7 @@ import { claimPull, readPull } from '../../sources/github-pull.ts'
 import type { SourceContext } from '../../sources/host.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
 import type { Store } from '../store.ts'
-import { reportRelay, threadFollowedNotice } from '../notices.ts'
+import { receiptNotice, reportRelay, threadFollowedNotice } from '../notices.ts'
 import type { OMPSessions } from '../sessions.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 
@@ -83,6 +83,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe('The ticket\'s source PR, or a PR from the branch named after this ticket (OMP_SUPERAGENT_NAME); requires GitHub configuration.'),
         reply_to_trigger_id: z.string().optional().describe('The human message this report answers, including a no-work acknowledgement; never for routine progress.'),
+        direct_reply: AcknowledgementSchema.optional().describe(`Optional single-hop user reply (at most ${IM_WORDS} words; Markdown supported) sent immediately to the person's conversation without waiting for another orchestrator turn: valid when answering reply_to_trigger_id, or on state=ready when no local file attachment needs wechat_send_file.`),
         // Never refuse a report for a long topic: the report may carry an answer that must reach the person.
         topic: z.string().trim().min(1).optional().describe(`What this ticket is about, in one or two sentences of at most ${TOPIC_CHARS} characters: the subject, the files or area it touches and where it stands; the orchestrator routes later messages to tickets by it. Send it with the first report and whenever it changes.`),
       }).strict(),
@@ -92,18 +93,37 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         const github = host.github
         if (args.pr_number != null && !github) throw new Error('GitHub Source is not configured')
         const pull = args.pr_number != null ? await readPull(github!, args.pr_number, signal) : undefined
-        // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
-        return host.store.atomic(() => {
-          const refused = pull && claimPull(github!, ticketId, pull)
+        let directSent = false
+        // Claim the PR, record the report, and queue either the direct Outbox reply or the orchestrator relay atomically.
+        const result = host.store.atomic(() => {
+          if (pull) claimPull(github!, ticketId, pull)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}), ...(args.topic ? { topic: args.topic.slice(0, TOPIC_CHARS) } : {}) }
           const updated = host.engine.report(ticketId, report)
+          if (args.direct_reply && !updated.attention) {
+            if (args.reply_to_trigger_id) {
+              host.engine.reply({ purpose: 'answer', ticketId, triggerId: args.reply_to_trigger_id, text: args.direct_reply })
+              directSent = true
+            } else if (args.state === 'ready' && updated.channels.length > 0) {
+              host.engine.reply({ purpose: 'result', ticketId, text: args.direct_reply })
+              directSent = true
+            }
+          }
+          if (directSent) {
+            host.sessions.notify(...receiptNotice(
+              { worker_direct_reply: { ticket_id: ticketId, state: args.state, reply: args.direct_reply } },
+              `Worker sent direct ${args.state} reply for ${ticketId}`,
+            ))
+            return { reported: true, notification: 'direct_outbox' as const }
+          }
           const relay = reportRelay(updated, report)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
           return { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }
         })
+        if (directSent) await host.sendReplies()
+        return result
       },
     }),
   ]

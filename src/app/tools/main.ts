@@ -1,6 +1,6 @@
 /** Main Session tools for routing triggers, assessing candidates, and sending replies. */
 import z from 'zod'
-import { UserError, followupOwners, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
+import { UserError, followupOwners, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople, type Ticket }
   from '../../core/index.ts'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
 import { AssessmentSchema, EvalReadSchema, WorktreeNameSchema, type MasterAssessor } from '../assessment.ts'
@@ -15,7 +15,7 @@ const RoutingNoteSchema = z.string().trim()
   .describe(`Optional routing background or explicit human constraint, at most ${NOTE_WORDS} words. Never add implementation instructions or replace the original source.`)
 export interface MainToolsHost {
   readonly logger: { warn(message: string): void }
-  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
+  readonly engine: Pick<EngineForMainSession, 'candidate' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
   readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
   readonly assessor: Pick<MasterAssessor, 'context' | 'read' | 'decide'>
   readonly resources: ResourceHost
@@ -24,6 +24,7 @@ export interface MainToolsHost {
   /** Runs an Engine command initiated by the main Session without emitting self-notifications. */
   quietly<T>(run: () => T): T
   readonly wechat: Pick<WeChatBridge, 'sendFile'>
+  enqueueSidecar?(payload: { ticketId: string; triggerId: string; batchIds: readonly string[]; note?: string }): void
 }
 /** Schedules an Engine pass to execute the recorded routing decision and formats the tool response. */
 function routed(host: MainToolsHost, result: { decision?: DecisionKind; reason: string; ticketId?: string | undefined }) {
@@ -38,13 +39,13 @@ const fromDecision = (decision: Decision) => ({ decision: decision.kind, reason:
  * runs (`FIELDS`), so an item that lacks one, or whose value breaks a limit, is refused alone.
  */
 const RouteItemSchema = z.object({
-  kind: z.enum(['accept', 'attach', 'ignore', 'stop']),
+  kind: z.enum(['accept', 'attach', 'sidecar', 'ignore', 'stop']),
   trigger_id: z.string().describe('The candidate card\'s trigger_id; deciding it decides its batch.'),
-  ticket_id: z.string().nullish().describe('attach and stop: the ticket.'),
+  ticket_id: z.string().nullish().describe('attach, sidecar and stop: the ticket.'),
   title: z.string().nullish().describe('accept: a short label of at most 200 characters describing the original request; no added requirements or implementation advice.'),
   worktree_name: z.string().nullish().describe(`accept: ${WorktreeNameSchema.description ?? ''}`),
-  acknowledgement: z.string().nullish().describe(`accept: one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted as a reply to the original source on acceptance, so do not quote the source; quote an earlier proposal briefly only when the trigger merely confirms it and the sentence does not already state it. No generic I will handle it.`),
-  note: z.string().nullish().describe(`accept and attach: ${RoutingNoteSchema.description ?? ''}`),
+  acknowledgement: z.string().nullish().describe(`accept (required) and attach (recommended for chat follow-on work): one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted immediately as a reply to the original source, so do not quote the source.`),
+  note: z.string().nullish().describe(`accept, attach and sidecar: ${RoutingNoteSchema.description ?? ''}`),
   reason: z.string().nullish().describe('ignore and stop: why, at most 500 characters; an ignore needs it.'),
   answer: z.string().trim().min(1).max(20000).optional().describe('ignore only: for ordinary conversation that needs no ticket, the natural answer to send immediately through the existing reply pipeline. Avoids another model turn.'),
 }).strict()
@@ -53,11 +54,11 @@ type Kind = RouteItem['kind']
 type Field = Exclude<keyof RouteItem, 'kind' | 'trigger_id'>
 /** Each field's check, the kinds whose items read it and those that need it; an item of another kind leaves it unread. */
 const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: readonly Kind[] }> = {
-  ticket_id: { check: z.string(), reads: ['attach', 'stop'], needs: ['attach', 'stop'] },
+  ticket_id: { check: z.string(), reads: ['attach', 'sidecar', 'stop'], needs: ['attach', 'sidecar', 'stop'] },
   title: { check: z.string().max(200), reads: ['accept'], needs: ['accept'] },
   worktree_name: { check: WorktreeNameSchema, reads: ['accept'], needs: ['accept'] },
-  acknowledgement: { check: AcknowledgementSchema, reads: ['accept'], needs: ['accept'] },
-  note: { check: RoutingNoteSchema, reads: ['accept', 'attach'], needs: [] },
+  acknowledgement: { check: AcknowledgementSchema, reads: ['accept', 'attach'], needs: ['accept'] },
+  note: { check: RoutingNoteSchema, reads: ['accept', 'attach', 'sidecar'], needs: [] },
   reason: { check: z.string().max(500), reads: ['ignore', 'stop'], needs: ['ignore'] },
   answer: { check: z.string().max(20000), reads: ['ignore'], needs: [] },
 }
@@ -86,7 +87,9 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
   // A Trigger an earlier item decided went with that item's Decision, also as a member of its batch.
   // A stop of it for another ticket is the Engine's to judge.
   const earlier = decided.get(item.trigger_id)
-  if (earlier && item.kind === 'ignore') return { refused: `Decided in this call with ${earlier}, whose Decision took its batch` }
+  if (earlier && (item.kind === 'ignore' || item.kind === 'sidecar')) {
+    return { refused: `Decided in this call with ${earlier}, whose Decision took its batch` }
+  }
   switch (item.kind) {
     case 'accept': {
       const before = host.store.triggers.disposition(item.trigger_id)?.decisionId
@@ -100,8 +103,28 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       return { ...fromDecision(decision), triggerIds: decision.triggerIds }
     }
     case 'attach': {
-      const ticket = host.quietly(() => host.engine.attach(item.ticket_id!, item.trigger_id, item.note ?? undefined))
-      return { reason: 'Attached: the ticket follows the trigger\'s thread and receives the trigger', ticketId: ticket.id }
+      const candidate = host.engine.candidate(item.trigger_id)
+      const primary = host.store.triggers.get(item.trigger_id)
+      const burst = primary?.source === 'chat' && candidate
+        ? candidate.triggers.filter(trigger => trigger.actor.id === primary.actor.id).map(trigger => trigger.id)
+        : [item.trigger_id]
+      const targets = burst.includes(item.trigger_id) ? burst : [item.trigger_id]
+      let ticket!: Ticket
+      for (const id of targets) {
+        ticket = host.quietly(() => host.engine.attach(item.ticket_id!, id, id === item.trigger_id ? item.note ?? undefined : undefined))
+      }
+      if (item.acknowledgement) {
+        host.engine.reply({ purpose: 'acknowledgement', ticketId: ticket.id, triggerId: item.trigger_id, text: item.acknowledgement })
+      }
+      return { reason: 'Attached: the ticket follows the trigger\'s thread and receives the trigger', ticketId: ticket.id, triggerIds: targets }
+    }
+    case 'sidecar': {
+      const ticket = host.store.tickets.get(item.ticket_id!)
+      if (!ticket) return { refused: `Unknown ticket: ${item.ticket_id}` }
+      if (!host.enqueueSidecar) return { refused: 'Sidecar is unavailable' }
+      const decision = host.engine.decide(item.trigger_id, { kind: 'ignore', reason: item.note || 'Answered via read-only sidecar' })
+      host.enqueueSidecar({ ticketId: ticket.id, triggerId: item.trigger_id, batchIds: decision.triggerIds, ...note })
+      return { decision: 'ignore', reason: 'Dispatched to read-only sidecar for immediate reply', ticketId: ticket.id, triggerIds: decision.triggerIds }
     }
     // Through `engine.decide`, so only a person's message the gate admits with explicit strength stops a ticket.
     case 'stop': {
@@ -122,7 +145,7 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
 function routeTool(host: MainToolsHost): Tool {
   return tool({
     name: 'orchestrator_route',
-    description: 'Route candidates, one item each by the card\'s trigger_id, in one call: accept an explicit request as a new ticket, attach a trigger to an existing ticket, stop a ticket on a person\'s stop message, or ignore a candidate that needs no ticket or stop, as dispatch says. Items run in order and each is answered on its own; a refused item leaves the others. An inferred candidate may be ignored here; accepting one goes through orchestrator_eval_decide.',
+    description: 'Route candidates, one item each by the card\'s trigger_id, in one call: accept an explicit request as a new ticket, attach follow-on work to an existing ticket (with optional immediate acknowledgement), sidecar a read-only progress/summary/comparison question on a ticket without waking its worker, stop a ticket on a person\'s stop message, or ignore a candidate that needs no ticket or stop, as dispatch says. Items run in order and each is answered on its own; a refused item leaves the others. An inferred candidate may be ignored here; accepting one goes through orchestrator_eval_decide.',
     schema: z.object({ decisions: z.array(RouteItemSchema).min(1).max(20) }).strict(),
     execute: async ({ decisions }) => {
       const decided = new Map<string, string>()

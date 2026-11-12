@@ -111,17 +111,6 @@ export function inputMessage(input: TicketInput, trigger?: object): string | und
   if (input.kind === 'note') return `Note from the orchestrator, for context only: ${input.text}`
   return input.kind === 'text' ? input.text : undefined
 }
-/**
- * The marker and the message of a resume that still wait for the ticket's worker. They go with its first turn: a worker that
- * restarts on the bare marker judges the ticket without the message and may report it done before the message arrives.
- */
-function resumeInputs(ticket: Ticket): { marker: TicketInput; trigger: TicketInput } | undefined {
-  const waiting = ticket.undelivered.flatMap(id => ticket.inputs.find(input => input.id === id) ?? [])
-  const marker = waiting[0]
-  if (marker?.kind !== 'resumed') return undefined
-  const trigger = waiting.find(input => input.kind === 'trigger' && input.triggerId === marker.triggerId)
-  return trigger && { marker, trigger }
-}
 
 /** Whether the running Assignment's last word hands the ticket to a person: blocked or failed without a newer human message, or ready or a question with no Input since. */
 function handedOff(ticket: Ticket): boolean {
@@ -315,6 +304,10 @@ export class OMPExecutor implements Executor {
         this.runningTickets.add(ticketId)
         return
       }
+      if (event.type === 'auto_retry_start' && this.unloadAfterEnd.has(ticketId)) {
+        this.turnOver(ticketId, session)
+        return
+      }
       if (event.type !== 'agent_end') return
       if (event.isTerminal !== false) this.turnOver(ticketId, session)
       else if (event.awaitingAsyncWork) this.backgrounded(ticketId, session)
@@ -473,6 +466,11 @@ export class OMPExecutor implements Executor {
     if (!current()) return
     this.unloadAfterEnd.delete(ticket.id)
     const sessionId = workerSessionId(ticket.id)
+    const existing = this.host.sessions.get(sessionId)
+    if (existing && !existing.isStreaming && existing.messages.filter(m => m.role === 'assistant').at(-1)?.stopReason === 'error') {
+      await this.host.sessions.stop(sessionId, 'Reset errored worker turn before new Assignment')
+      if (!current()) return
+    }
     const session = await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker', ticket)
     this.observe(session, ticket.id)
     if (!current()) return
@@ -483,21 +481,26 @@ export class OMPExecutor implements Executor {
     const retried = ticket.assignments.at(-2)?.endedReason === 'retried' ? { note: RETRIED } : {}
     const assignmentText = ticket.execution?.assignment ?? ''
     const { text: brief, chars, read } = capped(assignmentText, ASSIGNMENT_CHARS, `ticket/${ticket.id}/assignment`)
+    const mandate = mandateInstructions(ticket.mandate)
     const card = told || !source ? undefined : await this.triggerCard(ticket, source.id)
     const fresh = this.host.store.tickets.get(ticket.id) ?? ticket
-    const resumed = later ? resumeInputs(fresh) : undefined
-    const resumedText = resumed ? (await Promise.all([resumed.marker, resumed.trigger].map(input => this.inputText(fresh, input)))).flatMap(part => part ?? []) : []
+    const waitingInputs = later || fresh.undelivered.length
+      ? fresh.undelivered.flatMap(id => fresh.inputs.find(input => input.id === id) ?? []) : []
+    const waitingText = waitingInputs.length
+      ? (await Promise.all(waitingInputs.map(input => this.inputText(fresh, input)))).flatMap(part => part ?? []) : []
     if (!current()) return
     const batch = told ? [] : batchOf(this.host, ticket).map(batchLine)
-    const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried })
-      : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
+    const text = told ? JSON.stringify({ ticket_id: ticket.id, directory: workspace, assignment: ticket.assignments.length, ...retried })
+      : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, directory: workspace,
+        ...(ticket.execution?.name ? { worktree_name: ticket.execution.name } : {}),
+        ...(mandate ? { mandate } : {}), ...(brief ? { assignment: brief } : {}),
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
         ...(batch.length ? { batch } : {}), ...retried })
     const requestId = later ? `assignment:${ticket.id}:${assignment.id}` : first
-    await this.host.sessions.prompt(sessionId, requestId, [text, ...resumedText].join('\n\n'), 'queue',
+    await this.host.sessions.prompt(sessionId, requestId, [text, ...waitingText].join('\n\n'), 'steer',
       () => { if (!current()) throw new Error('Launch authorization changed before worker delivery') },
       () => { this.host.engine.assignmentStarted(ticket.id, assignment.id) },
-      resumed && [resumed.marker.id, resumed.trigger.id])
+      waitingInputs.length ? waitingInputs.map(item => item.id) : undefined)
   }
 
   resume(): void {

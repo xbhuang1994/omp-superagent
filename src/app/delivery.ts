@@ -1,6 +1,7 @@
 /** Idempotent, file-backed custom-message delivery to OMP sessions. */
 import type { AgentSession, SessionEntry } from '@oh-my-pi/pi-coding-agent'
 import type { ImageContent, TextContent } from '@oh-my-pi/pi-ai'
+import { Later } from './effects.ts'
 type DeliveryContent = string | (TextContent | ImageContent)[]
 
 interface Pending {
@@ -47,6 +48,21 @@ export class AgentDelivery {
     }
     session.sessionManager.onEntryAppended = installed
     const unsubscribe = session.subscribe(event => {
+      if (event.type === 'agent_end' && event.isTerminal !== false) {
+        const lastStop = session.messages.filter(message => message.role === 'assistant').at(-1)?.stopReason
+        if (lastStop !== 'error' && lastStop !== 'aborted') return
+        const snapshot = [...pending.entries()]
+        if (!snapshot.length) return
+        setTimeout(() => {
+          if (session.isStreaming || session.hasAdmittedSubmission || session.isDisposed) return
+          for (const [id, item] of snapshot) {
+            if (pending.get(id) !== item || item.visible) continue
+            if (persisted(session, id)) item.markVisible()
+            else item.fail(new Later('Session settled with error before queued message was persisted'))
+          }
+        }, 50)
+        return
+      }
       if (event.type !== 'message_end' || event.message.role !== 'custom' || event.message.customType !== 'omp-superagent') return
       const details: unknown = event.message.details
       if (details && typeof details === 'object' && 'requestId' in details && typeof details.requestId === 'string') {
@@ -72,7 +88,8 @@ export class AgentDelivery {
     const details = { requestId, source: presentation.source, ...presentation.attachments?.length ? { attachments: presentation.attachments } : {} }
     const message = { role: 'custom' as const, customType: 'omp-superagent', content, display: presentation.display,
       details, attribution: presentation.attribution, timestamp: Date.now() }
-    if (!session.isStreaming) session.agent.appendMessage(message)
+    const hasImage = Array.isArray(content) && content.some(part => part.type === 'image')
+    if (hasImage && !session.isStreaming) session.agent.appendMessage(message)
     session.sessionManager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details, message.attribution)
     await session.flushToDisk()
   }

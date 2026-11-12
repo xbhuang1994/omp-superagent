@@ -27,6 +27,6 @@ The orchestrator routes and delivers answers/results; the worker owns acknowledg
 The transport rejects longer IM messages, including when technical detail is requested.
 Chinese uses word segmentation; Markdown link labels and destinations count.
 Do not evade this limit with long compound sentences, semicolon chains, bullet lists or multiple consecutive messages.
-Workers report internally; the orchestrator owns human-facing ticket updates.
+Workers report internally (or include direct_reply on ready/answer reports when no file upload is needed); the orchestrator owns human-facing updates whenever a report carries no direct_reply.
 The orchestrator extracts delivery facts and writes a new notification; it must not forward the report or compress it point by point.
 Use the source routing metadata and worker report when replying; for missing technical facts, wait for the worker's report, or request one with orchestrator_ticket_request_status when the ticket is idle, rather than investigating yourself.

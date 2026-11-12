@@ -147,7 +147,9 @@ export class WeChatProtocol {
         token: account.token, body: { get_updates_buf: cursor }, timeoutMs, signal,
       })
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError' && !signal.aborted) return { ret: 0, msgs: [], get_updates_buf: cursor }
+      if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError') && !signal.aborted) {
+        return { ret: 0, msgs: [], get_updates_buf: cursor }
+      }
       throw error
     }
   }

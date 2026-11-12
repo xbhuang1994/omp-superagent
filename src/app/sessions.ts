@@ -8,11 +8,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import z from 'zod'
 import { key, liveTicket, runningAssignment, type EngineForExecutor, type Ticket } from '../core/index.ts'
-import { mandateInstructions, workerSessionId } from '../executor/omp.ts'
+import { workerSessionId } from '../executor/omp.ts'
 import { packagePath } from '../infra/paths.ts'
 import { KV } from '../kv.ts'
 import type { Machine } from '../deployment.ts'
-import { watchdogPrompt } from './context.ts'
+import { sidecarPrompt, watchdogPrompt } from './context.ts'
 import { AgentDelivery } from './delivery.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
@@ -43,6 +43,9 @@ const WORKER_SETTINGS = {
   'async.enabled': true,
   'bash.autoBackground.enabled': true,
   'bash.autoBackground.thresholdMs': 60_000,
+  'compaction.thresholdTokens': 100_000,
+  'compaction.keepRecentTokens': 20_000,
+  'providers.cacheWarming': 'streaming',
   'task.maxConcurrency': 8,
   'task.maxRecursionDepth': 2,
 } as const
@@ -230,11 +233,11 @@ export class OMPSessions {
     // RoleModelSchema admits exactly OMP's selector strings; its packages declare them through incompatible enum aliases.
     const thinkingLevel = configured?.thinkingLevel as never
     const version = this.host.prompts.current()
-    const composed = role === 'watchdog'
+    // Keep every role's system prompt byte-identical across tickets so all workers share one provider prefix cache;
+    // per-ticket directory, worktree name and mandate arrive in the initial assignment message instead.
+    const customSystemPrompt = role === 'watchdog'
       ? `${watchdogPrompt}\n\n${environmentSection(version.config, this.host.watchdogEnvironment?.())}`
-      : this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)
-    const mandate = ticket ? mandateInstructions(ticket.mandate) : ''
-    const customSystemPrompt = mandate ? `${composed}\n\n${mandate}` : composed
+      : this.host.prompts.compose(version.config, role, this.host.watchdogEnvironment?.())
     const tools = this.host.tools(sessionId, ticket)
     const toolNames = [...role === 'worker' ? [...WORK_TOOLS, 'task', 'wait'] : ['read', 'bash'], ...tools.map(tool => tool.name)]
     // Subagents inherit these prepared extensions, so the guard covers their tool calls too.
@@ -278,7 +281,7 @@ export class OMPSessions {
       preloadedPreparedExtensions: extensions.map((factory, index) => ({ path: `<omp-superagent-worker-${index}>`, resolvedPath: `<omp-superagent-worker-${index}>`, factory, error: null })),
       bindProcessState: false,
       hasUI: false,
-      cacheWarming: false,
+      cacheWarming: role === 'worker',
       enableMCP: false,
       enableLsp: false,
       disableExtensionDiscovery: true,
@@ -403,6 +406,64 @@ export class OMPSessions {
     await this.stop(this.host.masterId, 'Orchestrator Session reopened')
     await this.ensure(this.host.masterId, this.host.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
   }
+  /** Run one stateless, in-memory read-only Sidecar turn sharing a single static prefix cache key across all queries. */
+  async runSidecar(cwd: string, promptText: string, tools: Tool[], timeoutMs = 90_000): Promise<string> {
+    await this.ready
+    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    const settings = this.host.store.settings()
+    const configured = settings.eval.model ?? settings.executor.model
+    const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
+    if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
+    const thinkingLevel = configured?.thinkingLevel as never
+    const { session } = await createAgentSession({
+      cwd,
+      agentDir: this.host.machine.agentDir,
+      authStorage: this.authStorage,
+      modelRegistry: this.modelRegistry,
+      agentRegistry: new AgentRegistry(),
+      settings: Settings.isolated(ORCHESTRATOR_SETTINGS),
+      sessionManager: SessionManager.inMemory(cwd),
+      customSystemPrompt: sidecarPrompt,
+      noContextFiles: true,
+      promptTemplates: [],
+      slashCommands: [],
+      rules: [],
+      skills: [],
+      customTools: tools.map(ompTool),
+      toolNames: ['read', ...tools.map(item => item.name)],
+      restrictToolNames: true,
+      allowRestrictedCustomTools: true,
+      extensions: [],
+      bindProcessState: false,
+      hasUI: false,
+      cacheWarming: false,
+      enableMCP: false,
+      enableLsp: false,
+      disableExtensionDiscovery: true,
+      ...model ? { model, thinkingLevel } : {},
+    })
+    session.agent.promptCacheKey = `sidecar-${key(this.host.machine.stateDir)}`
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>()
+    const timer = setTimeout(() => { reject(new Error(`Sidecar query timed out after ${timeoutMs}ms`)) }, timeoutMs)
+    const onAbort = () => { reject(new Error('omp-superagent stopped during sidecar query')) }
+    this.host.lifetime.addEventListener('abort', onAbort, { once: true })
+    const unsubscribe = session.subscribe(event => {
+      if (event.type === 'agent_end' && event.isTerminal !== false) resolve()
+    })
+    try {
+      await session.sendCustomMessage({ customType: 'omp-superagent-sidecar', content: promptText, display: false, attribution: 'agent' },
+        { triggerTurn: true, deliverAs: 'steer' })
+      await ended
+      return session.getLastAssistantText()?.trim() ?? ''
+    } finally {
+      clearTimeout(timer)
+      this.host.lifetime.removeEventListener('abort', onAbort)
+      unsubscribe()
+      session.beginDispose()
+      await session.dispose()
+    }
+  }
+
 
   async stop(sessionId: string, reason: string): Promise<void> {
     const session = this.loaded.get(sessionId)
