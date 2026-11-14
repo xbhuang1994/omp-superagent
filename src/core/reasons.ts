@@ -16,7 +16,7 @@ export const REASONS = {
   forwarded: 'Forwarded to the worker of the Ticket already on this Thread',
   senderNotMember: 'The sender is not on the Source\'s list',
   retried: 'Retried by a person',
-  hostRestarted: 'omp-superagent restarted',
+  hostRestarted: 'neo-agent restarted',
   stopUnknown: 'Stop target is unknown or already ended',
   stopNotExplicit: 'A stop needs an explicit request from a sender on the list',
   directionUnsettled: 'Implementation intent or target direction is not established, or a product/design decision is still required',

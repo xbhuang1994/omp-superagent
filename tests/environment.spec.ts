@@ -20,13 +20,13 @@ it('writes only gh and blocked-command shims plus isolated git config', async ()
 it('refuses to overwrite foreign files', async () => {
   mkdirSync(workerBin(dir), { recursive: true })
   writeFileSync(join(workerBin(dir), 'gh'), 'foreign')
-  await expect(writeEnvironment(testDeployment({ stateDir: dir }), [])).rejects.toThrow('was not written by omp-superagent')
+  await expect(writeEnvironment(testDeployment({ stateDir: dir }), [])).rejects.toThrow('was not written by neo-agent')
   expect(readFileSync(join(workerBin(dir), 'gh'), 'utf8')).toBe('foreign')
 })
 it('runs commands through execFile with argument boundaries and worker env', async () => {
   const script = join(dir, 'probe')
-  writeFileSync(script, '#!/bin/sh\nprintf "%s|%s" "$1" "$OMP_SUPERAGENT_TICKET"\n'); chmodSync(script, 0o755)
-  expect(await runAsWorker([script, '$(touch nope)'], dir, new AbortController().signal, { OMP_SUPERAGENT_TICKET: 't1' })).toBe('$(touch nope)|t1')
+  writeFileSync(script, '#!/bin/sh\nprintf "%s|%s" "$1" "$NEO_AGENT_TICKET"\n'); chmodSync(script, 0o755)
+  expect(await runAsWorker([script, '$(touch nope)'], dir, new AbortController().signal, { NEO_AGENT_TICKET: 't1' })).toBe('$(touch nope)|t1')
 })
 it('rejects repository-local credential overrides', async () => {
   const repo = join(dir, 'repo'); mkdirSync(repo)

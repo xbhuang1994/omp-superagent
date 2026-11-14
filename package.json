@@ -1,15 +1,15 @@
 {
-  "name": "omp-superagent",
+  "name": "neo-agent",
   "author": "DeepSeek Harness Team <team@dsh.dev>",
   "license": "MIT",
   "version": "0.1.0",
   "private": true,
-  "description": "A standalone OMP agent for one GitHub repository: evaluates authorized requests and executes each Ticket in a persistent worker Session.",
+  "description": "Neo Agent: a standalone agent for one GitHub repository: evaluates authorized requests and executes each Ticket in a persistent worker Session.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "bin": {
-    "omp-superagent": "./lib/cli.js"
+    "neo-agent": "./lib/cli.js"
   },
   "exports": {
     ".": {

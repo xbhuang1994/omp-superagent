@@ -86,7 +86,7 @@ export class GithubConnection {
   }
 
   private async switch(instance: z.infer<typeof GithubUpdateSchema>) {
-    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    if (this.host.closing()) throw new Error('neo-agent is stopping')
     const { store } = this.host
     const previous = this.resolved
     const deployment = instance.enabled ? await this.verify(instance.config) : undefined

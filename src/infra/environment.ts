@@ -9,7 +9,9 @@ import { SetupError } from '../setup.ts'
 import { commandError } from './commands.ts'
 
 const exec = promisify(execFile)
-const MARKER = '# Written by omp-superagent on every start; edits are lost.'
+const MARKER = '# Written by neo-agent on every start; edits are lost.'
+/** Marker written before the rename to neo-agent; files carrying it are still ours. */
+const LEGACY_MARKER = '# Written by omp-superagent on every start; edits are lost.'
 export const WORKER_COMMANDS: readonly string[] = ['gh', 'git']
 export const workerBin = (stateDir: string): string => join(stateDir, 'worker-bin')
 export const workerGitConfig = (stateDir: string): string => join(stateDir, 'worker-gitconfig')
@@ -42,7 +44,7 @@ export function agentVariables(stateDir: string): Record<string, string | undefi
 
 async function written(file: string): Promise<boolean> {
   if (!(await lstat(file)).isFile()) return false
-  return (await readFile(file, 'utf8')).split('\n', 2).includes(MARKER)
+  return (await readFile(file, 'utf8')).split('\n', 2).some(line => line === MARKER || line === LEGACY_MARKER)
 }
 async function own(file: string, text: string, mode = 0o644): Promise<void> {
   let foreign = false

@@ -1,5 +1,5 @@
 ---
-name: omp-superagent-github
+name: neo-agent-github
 description: Read GitHub issues, pull requests, reviews and CI using gh.
 ---
 
@@ -9,6 +9,6 @@ Before substantial work on a new human request or review comment, call `orchestr
 
 Answer and resolve review threads as the Communication section says. To resolve a thread, use GitHub GraphQL `resolveReviewThread`.
 
-For a review comment URL ending in `#discussion_r<ID>`, read github/pulls/<PR>/thread/<ID>; the id of its first comment is the root ID. When the outcome requires a reply, post with `gh api repos/<OWNER>/<REPO>/pulls/<PR>/comments/<ROOT>/replies --method POST -f body=<text>`, where `<OWNER>/<REPO>` is `$OMP_SUPERAGENT_GITHUB_REPOSITORY` from the execution environment section. Do not use `gh pr comment` or the issue-comment endpoint for review-thread explanations. Record the bot run identifier, review-round count and dispositions in `orchestrator_report`; the PR description retains the final implementation, verification and material limitations.
+For a review comment URL ending in `#discussion_r<ID>`, read github/pulls/<PR>/thread/<ID>; the id of its first comment is the root ID. When the outcome requires a reply, post with `gh api repos/<OWNER>/<REPO>/pulls/<PR>/comments/<ROOT>/replies --method POST -f body=<text>`, where `<OWNER>/<REPO>` is `$NEO_AGENT_GITHUB_REPOSITORY` from the execution environment section. Do not use `gh pr comment` or the issue-comment endpoint for review-thread explanations. Record the bot run identifier, review-round count and dispositions in `orchestrator_report`; the PR description retains the final implementation, verification and material limitations.
 
 The host delivers subscribed PR comments, reviews and CI directly to the bound worker. Immediately after creating or adopting a ticket PR, call `orchestrator_report` with `state: progress` and `pr_number`; do not wait for CI or handoff. Read each original trigger and acknowledge new human requests before substantial work. Worker reports still go to the orchestrator for concise source-conversation delivery.

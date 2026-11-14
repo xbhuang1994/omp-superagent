@@ -10,7 +10,7 @@ bun run build
 ./lib/cli.js --config /absolute/path/config.json
 ```
 
-`omp-superagent` owns one state-directory lock. A second process on the same directory fails before opening SQLite. GitHub identity and push access are validated when `sources.github.enabled` is true, at startup and when the settings window connects it; omit that source for Web-only chat. `SIGINT`/`SIGTERM` performs ordered cleanup and exits zero on success.
+`neo-agent` owns one state-directory lock. A second process on the same directory fails before opening SQLite. GitHub identity and push access are validated when `sources.github.enabled` is true, at startup and when the settings window connects it; omit that source for Web-only chat. `SIGINT`/`SIGTERM` performs ordered cleanup and exits zero on success.
 
 ## Startup JSON
 
@@ -64,7 +64,11 @@ Only schema 1 is accepted. An existing non-schema-1 SQLite file is preserved and
 
 These are account-selection guardrails, not an OS security sandbox. Workers run as the operator's OS user. `executor.blockedCommands` may add command shims, but cannot block `gh` or `git`.
 
-The documented environment names are `OMP_SUPERAGENT_DIR`, `OMP_SUPERAGENT_NAME`, `OMP_SUPERAGENT_TICKET`, `OMP_SUPERAGENT_BLOCKED_COMMANDS`, `OMP_SUPERAGENT_GITHUB_REPOSITORY`, `OMP_SUPERAGENT_GITHUB_ACCOUNT`, `OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL`, `OMP_SUPERAGENT_GITHUB_NUMBER`, and `OMP_SUPERAGENT_GITHUB_PR_HEAD`.
+The documented environment names are `NEO_AGENT_DIR`, `NEO_AGENT_NAME`, `NEO_AGENT_TICKET`, `NEO_AGENT_BLOCKED_COMMANDS`, `NEO_AGENT_GITHUB_REPOSITORY`, `NEO_AGENT_GITHUB_ACCOUNT`, `NEO_AGENT_GITHUB_COMMIT_EMAIL`, `NEO_AGENT_GITHUB_NUMBER`, and `NEO_AGENT_GITHUB_PR_HEAD`.
+
+### Upgrading from omp-superagent
+
+The project was renamed from `omp-superagent` to `neo-agent`. The package, the `neo-agent` command and the bundled `neo-agent-github` skill carry the new name, and every `OMP_SUPERAGENT_*` variable is now `NEO_AGENT_*`: update `executor.prepare` commands and team prompt sections that reference the old names, since the old variables are no longer set. An existing state directory keeps working at its current path without migration: worker shims written under the old name are recognised and rewritten, Session entries with custom type `omp-superagent` still count as delivered, and GitHub comments carrying the old `<!-- omp-superagent:<id> -->` marker are still recognised, so no reply is posted twice.
 
 ### Connecting from the settings window
 

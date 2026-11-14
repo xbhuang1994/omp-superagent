@@ -29,7 +29,7 @@ flowchart LR
 
 Aliases remain `orchestrator-<stateKey>` and `worker-<ticketId>`; OMP UUIDs stay outside the domain model. SQLite `session-file:<alias>` records each JSONL path. Reopen uses `throwIfMissing`; missing/corrupt files fail rather than creating empty history.
 
-Every application message uses custom type `omp-superagent` and durable `requestId`. Delivery scans the full SessionManager branch and pending sends. Queue/steer/inject completes after the custom SessionEntry is visible and `flushToDisk()` succeeds; then domain acceptance and Input delivered/read commit. Duplicate IDs confirm again without another entry. Stop rejects pending sends for retry. Before-model hooks wait only for entry-visible confirmations because OMP emits initial entries after that hook.
+Every application message uses custom type `neo-agent` and durable `requestId`; entries written under the former type `omp-superagent` are read as the same. Delivery scans the full SessionManager branch and pending sends. Queue/steer/inject completes after the custom SessionEntry is visible and `flushToDisk()` succeeds; then domain acceptance and Input delivered/read commit. Duplicate IDs confirm again without another entry. Stop rejects pending sends for retry. Before-model hooks wait only for entry-visible confirmations because OMP emits initial entries after that hook.
 
 Worker tool guards reread Ticket state and block built-in/custom tools after termination, in the worker's subagents too. The orchestrator has `read`, `bash` and application tools. Workers add `read`, `bash`, `edit`, `write`, `task`, `wait`.
 

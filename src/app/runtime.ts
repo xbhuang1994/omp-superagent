@@ -86,7 +86,7 @@ export class Runtime implements SourceHost {
     this.releaseLock = async () => { release() }
     let opened: Store | undefined
     try {
-      const report = (error: unknown) => { console.warn(`omp-superagent: ${String(error)}`) }
+      const report = (error: unknown) => { console.warn(`neo-agent: ${String(error)}`) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
       // A panel choice holds while the startup JSON still says what it said when the choice was made; a JSON edit wins.
       const written = this.written = { models: { eval: this.startup.eval.model, executor: this.startup.executor.model, advisor: this.startup.executor.advisor },
@@ -194,7 +194,7 @@ export class Runtime implements SourceHost {
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   get lifetime(): AbortSignal { return this.stopped.signal }
   get deployment(): Deployment {
-    if (!this.github.deployment) throw new Error('omp-superagent GitHub deployment is not ready')
+    if (!this.github.deployment) throw new Error('neo-agent GitHub deployment is not ready')
     return this.github.deployment
   }
   configured(): boolean { return this.github.deployment !== undefined || this.sources.instance('chat')?.enabled === true }
@@ -229,7 +229,7 @@ export class Runtime implements SourceHost {
     this.store.set(KV.runtime.startupKernel, this.machine.kernel)
     this.store.set(KV.runtime.startupGithub, this.written.github)
     await this.sessions.ready
-    await this.sessions.ensure(this.masterId, this.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
+    await this.sessions.ensure(this.masterId, this.machine.stateDir, 'neo-agent orchestrator', 'orchestrator')
     await this.wechat.start()
     if (this.closing()) return
     this.executor.resume()
@@ -258,7 +258,7 @@ export class Runtime implements SourceHost {
       this.stopped.abort()
       this.github.restore()
       try { this.store.close() } finally {
-        await this.releaseLock?.().catch((error: unknown) => { console.warn(`omp-superagent could not release its state directory lock: ${String(error)}`) })
+        await this.releaseLock?.().catch((error: unknown) => { console.warn(`neo-agent could not release its state directory lock: ${String(error)}`) })
       }
     }
   }

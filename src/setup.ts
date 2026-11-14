@@ -3,8 +3,8 @@ import { fill } from './infra/text.ts'
 
 export type SetupPlace = 'deployment' | 'github'
 export const SETUP_PROBLEMS = {
-  foreignFile: ['deployment', '{file} was not written by omp-superagent; move it, or choose another state directory.'],
-  gitTooOld: ['deployment', 'git does not read the github.com credential configuration omp-superagent writes; git 2.32 or later is required.'],
+  foreignFile: ['deployment', '{file} was not written by neo-agent; move it, or choose another state directory.'],
+  gitTooOld: ['deployment', 'git does not read the github.com credential configuration neo-agent writes; git 2.32 or later is required.'],
   environmentFailed: ['deployment', 'Preparing the agent environment failed.'],
   repositoryUnset: ['github', 'The GitHub Source names no repository.'],
   agentCliUnset: ['github', 'The agent GitHub CLI is not set.'],

@@ -4,7 +4,7 @@
 
 `Prompts.compose()` combines built-in role text, team sections, execution environment, and (for the orchestrator) current Policy. The complete text is passed through OMP `customSystemPrompt`, preserving OMP's project footer. Workers additionally receive `mandateInstructions(ticket.mandate)`.
 
-The orchestrator loads no repository context files. Workers keep the target directory's `AGENTS.md`. Both roles disable discovered prompt templates, slash commands and rules. Only the packaged `omp-superagent-github` skill is loaded into workers; the orchestrator receives no skills.
+The orchestrator loads no repository context files. Workers keep the target directory's `AGENTS.md`. Both roles disable discovered prompt templates, slash commands and rules. Only the packaged `neo-agent-github` skill is loaded into workers; the orchestrator receives no skills.
 
 Team sections are `communication`, `scope`, and `delivery`. Versioned Prompt storage can retain team sections, custom skills and built-in overrides, with template placeholder validation and total-size limits. Runtime editing is outside this core service: startup JSON and stored versions are applied when Sessions are created/reopened, not edited by an agent tool.
 
@@ -18,4 +18,4 @@ The orchestrator gets `read`, `bash` and its application tools, with background 
 
 ## Environment
 
-Prompt and prepare examples use `OMP_SUPERAGENT_*` variables. A PR from a branch whose final segment is `OMP_SUPERAGENT_NAME` can bind to its Ticket. Prompt changes require restart; they do not alter authorization, Source scope, account wrappers or tool permissions.
+Prompt and prepare examples use `NEO_AGENT_*` variables. A PR from a branch whose final segment is `NEO_AGENT_NAME` can bind to its Ticket. Prompt changes require restart; they do not alter authorization, Source scope, account wrappers or tool permissions.

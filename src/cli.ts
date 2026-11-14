@@ -4,7 +4,7 @@ import { isAbsolute } from 'node:path'
 import { Runtime } from './app/runtime.ts'
 import { Config, machineOf } from './deployment.ts'
 
-const usage = 'Usage: omp-superagent --config <absolute-json-path>'
+const usage = 'Usage: neo-agent --config <absolute-json-path>'
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   const config = Config.parse(JSON.parse(await readFile(path, 'utf8')))
   const runtime = new Runtime(machineOf(config), config)
   await runtime.ready
-  console.error('omp-superagent ready')
+  console.error('neo-agent ready')
   if (config.web.enabled) console.error(`Web panel: ${runtime.web.url}`)
   let stopping: Promise<void> | undefined
   const stop = (): Promise<void> => stopping ??= runtime.stop().then(() => { process.exitCode = 0 }, error => {

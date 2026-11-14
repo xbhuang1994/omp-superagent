@@ -122,7 +122,7 @@ export class WeChatProtocol {
     if (options.signal) signals.push(options.signal)
     const response = await this.fetchImpl(new URL(path, `${baseUrl.replace(/\/$/, '')}/`), {
       method: options.method ?? 'POST', headers: this.headers(options.token),
-      ...options.body === undefined ? {} : { body: JSON.stringify({ ...options.body as object, base_info: { channel_version: CHANNEL_VERSION, bot_agent: 'omp-superagent/0.1.0' } }) },
+      ...options.body === undefined ? {} : { body: JSON.stringify({ ...options.body as object, base_info: { channel_version: CHANNEL_VERSION, bot_agent: 'neo-agent/0.1.0' } }) },
       signal: AbortSignal.any(signals),
     })
     if (!response.ok) throw new Error(`微信接口 HTTP ${response.status}`)
@@ -154,7 +154,7 @@ export class WeChatProtocol {
     }
   }
 
-  private async sendItem(account: WeChatAccount, item: Record<string, unknown>, clientId = `omp-superagent:${randomUUID()}`): Promise<void> {
+  private async sendItem(account: WeChatAccount, item: Record<string, unknown>, clientId = `neo-agent:${randomUUID()}`): Promise<void> {
     const response = await this.json<{ ret?: number; errmsg?: string }>(account.baseUrl, 'ilink/bot/sendmessage', {
       token: account.token,
       body: { msg: { from_user_id: '', to_user_id: account.userId, client_id: clientId, message_type: 2,
@@ -163,7 +163,7 @@ export class WeChatProtocol {
     if (response.ret) throw new Error(`微信发送失败：${response.errmsg ?? `ret=${response.ret}`}`)
   }
   async sendText(account: WeChatAccount, text: string, messageId?: string): Promise<void> {
-    if (text) await this.sendItem(account, { type: 1, text_item: { text } }, messageId ? `omp-superagent:${messageId}` : undefined)
+    if (text) await this.sendItem(account, { type: 1, text_item: { text } }, messageId ? `neo-agent:${messageId}` : undefined)
   }
   async sendMedia(account: WeChatAccount, plaintext: Buffer, name: string, mediaType: string, caption = ''): Promise<void> {
     if (plaintext.length > MAX_MEDIA_BYTES) throw new Error('微信媒体不能超过 100 MiB')

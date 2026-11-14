@@ -149,7 +149,7 @@ it('binds through WebUI and exchanges text, images and files with the persistent
       expect(wechatServer.sent.filter(message => JSON.stringify(message).includes('orchestrator 微信回复'))).toHaveLength(2)
       expect(store.get(KV.wechat.cursor)).toBe('cursor-1')
     }, { timeout: 5000 })
-    expect(JSON.stringify(wechatServer.sent)).toContain('"client_id":"omp-superagent:reply-0"')
+    expect(JSON.stringify(wechatServer.sent)).toContain('"client_id":"neo-agent:reply-0"')
     const transcript = JSON.stringify(sessions.get('main')?.sessionManager.getBranch())
     expect(transcript).toContain('wechat:9007199254740993')
     expect(transcript).toContain('wechat:media-1')

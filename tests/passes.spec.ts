@@ -33,7 +33,7 @@ it('runs the passes asked for during a pass as one pass after it', async () => {
   expect(h.engine.evaluateDue).toHaveBeenCalledTimes(3)
 })
 
-it('refuses a Trigger while omp-superagent stops, before the Engine stores anything, and starts a pass for one it stored', async () => {
+it('refuses a Trigger while neo-agent stops, before the Engine stores anything, and starts a pass for one it stored', async () => {
   let closing = true
   const h = passes(() => closing)
   expect(() => h.passes.receive(trigger)).toThrow('Orchestrator is stopping')

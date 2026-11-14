@@ -48,7 +48,7 @@ async function session(overrides: Partial<ClaudeOptions> = {}) {
   const claude = new ClaudeSession(journal, { cwd: dir, systemPrompt: 's', tools: [], builtinTools: ['Bash'], query: sdk.query, ...overrides })
   const events: KernelEvent[] = []
   claude.subscribe(event => events.push(event))
-  const send = (content: string, requestId = 'r1') => claude.sendCustomMessage({ customType: 'omp-superagent', content, display: false, details: { requestId } },
+  const send = (content: string, requestId = 'r1') => claude.sendCustomMessage({ customType: 'neo-agent', content, display: false, details: { requestId } },
     { triggerTurn: true, deliverAs: 'steer' })
   /** Submit and wait until Claude Code has the message, as frames pushed earlier would belong to no turn of it. */
   const submit = async (content: string, requestId = 'r1') => {
@@ -149,7 +149,7 @@ it('ignores subagent transcript frames and maps api retries', async () => {
 
 it('injects non-turn messages as context for the next turn and rejects work after beginDispose', async () => {
   const { sdk, claude, send, submit } = await session()
-  expect(await claude.sendCustomMessage({ customType: 'omp-superagent', content: 'note', display: false }, { triggerTurn: false })).toBe(false)
+  expect(await claude.sendCustomMessage({ customType: 'neo-agent', content: 'note', display: false }, { triggerTurn: false })).toBe(false)
   expect(sdk.prompts).toHaveLength(0)
   const { run } = await submit('work')
   sdk.push(state('running'), text('ok'), state('idle'))
@@ -175,7 +175,7 @@ it('resumes the SDK session and transcript from the journal file', async () => {
   const sdk = fake()
   const options: Record<string, unknown>[] = []
   const claude = new ClaudeSession(reopened, { cwd: dir, systemPrompt: 's', tools: [], builtinTools: [], query: ((params: { options: Record<string, unknown> }) => { options.push(params.options); return sdk.query(params as never) }) as never })
-  const again = claude.sendCustomMessage({ customType: 'omp-superagent', content: 'more', display: false }, { triggerTurn: true })
+  const again = claude.sendCustomMessage({ customType: 'neo-agent', content: 'more', display: false }, { triggerTurn: true })
   await vi.waitFor(() => { expect(sdk.prompts).toHaveLength(1) })
   sdk.push(state('running'), text('again'), state('idle'))
   await again
@@ -219,7 +219,7 @@ it('holds a submitted message back until delivery hooks finish, and sends a foll
   await vi.waitFor(() => { expect(sdk.prompts).toHaveLength(1) })
   expect(sdk.prompts[0]).not.toHaveProperty('priority')
   unhook()
-  void claude.sendCustomMessage({ customType: 'omp-superagent', content: 'later', display: false }, { triggerTurn: true, deliverAs: 'followUp' })
+  void claude.sendCustomMessage({ customType: 'neo-agent', content: 'later', display: false }, { triggerTurn: true, deliverAs: 'followUp' })
   await vi.waitFor(() => { expect(sdk.prompts).toHaveLength(2) })
   expect(sdk.prompts[1]).toMatchObject({ priority: 'later' })
   sdk.push(state('running'), text('ok'), state('idle'))
@@ -229,22 +229,22 @@ it('holds a submitted message back until delivery hooks finish, and sends a foll
 
 it('keeps unsent context across a restart and shows a chat image to the model once, without a duplicate entry', async () => {
   const first = await session()
-  await first.claude.sendCustomMessage({ customType: 'omp-superagent', content: 'notice', display: false }, { triggerTurn: false })
+  await first.claude.sendCustomMessage({ customType: 'neo-agent', content: 'notice', display: false }, { triggerTurn: false })
   const image = [{ type: 'text', text: 'look' }, { type: 'image', data: 'AAAA', mimeType: 'image/png' }]
   first.claude.agent.appendMessage({ role: 'custom', content: image })
-  first.journal.appendCustomMessageEntry('omp-superagent', image, true, { requestId: 'chat-1', source: 'web-panel' }, 'user')
-  first.journal.appendCustomMessageEntry('omp-superagent', 'reply text', true, { requestId: 'reply-1', source: 'chat-reply' }, 'agent')
+  first.journal.appendCustomMessageEntry('neo-agent', image, true, { requestId: 'chat-1', source: 'web-panel' }, 'user')
+  first.journal.appendCustomMessageEntry('neo-agent', 'reply text', true, { requestId: 'reply-1', source: 'chat-reply' }, 'agent')
   expect(first.journal.getBranch()).toHaveLength(3)
   await first.claude.dispose()
   const reopened = await Journal.open(first.journal.file, dir)
   const sdk = fake()
   const claude = new ClaudeSession(reopened, { cwd: dir, systemPrompt: 's', tools: [], builtinTools: [], query: sdk.query })
-  void claude.sendCustomMessage({ customType: 'omp-superagent', content: 'go', display: false }, { triggerTurn: true })
+  void claude.sendCustomMessage({ customType: 'neo-agent', content: 'go', display: false }, { triggerTurn: true })
   await vi.waitFor(() => { expect(sdk.prompts).toHaveLength(1) })
   const content = (sdk.prompts[0] as { message: { content: { type: string; text?: string }[] } }).message.content
   expect(content.map(part => part.type)).toEqual(['text', 'text', 'image', 'text'])
   expect(content.map(part => part.text)).toEqual(['notice', 'look', undefined, 'go'])
-  void claude.sendCustomMessage({ customType: 'omp-superagent', content: 'next', display: false }, { triggerTurn: true })
+  void claude.sendCustomMessage({ customType: 'neo-agent', content: 'next', display: false }, { triggerTurn: true })
   await vi.waitFor(() => { expect(sdk.prompts).toHaveLength(2) })
   expect((sdk.prompts[1] as { message: { content: unknown } }).message.content).toBe('next')
   await claude.dispose()
@@ -296,10 +296,10 @@ it('carries the visible chat transcript of an OMP session file into a new journa
   const omp = join(dir, 'omp.jsonl')
   await writeFile(omp, [
     { type: 'session', id: 'x' },
-    { type: 'custom_message', id: 'a', parentId: null, timestamp: '2026-11-01T00:00:00.000Z', customType: 'omp-superagent', content: 'hi', display: true, details: { requestId: 'c1', source: 'web-panel' }, attribution: 'user' },
-    { type: 'custom_message', id: 'b', parentId: 'a', timestamp: '2026-11-01T00:00:01.000Z', customType: 'omp-superagent', content: '{"card":1}', display: false, details: { requestId: 'relay-1' } },
+    { type: 'custom_message', id: 'a', parentId: null, timestamp: '2026-11-01T00:00:00.000Z', customType: 'neo-agent', content: 'hi', display: true, details: { requestId: 'c1', source: 'web-panel' }, attribution: 'user' },
+    { type: 'custom_message', id: 'b', parentId: 'a', timestamp: '2026-11-01T00:00:01.000Z', customType: 'neo-agent', content: '{"card":1}', display: false, details: { requestId: 'relay-1' } },
     { type: 'message', id: 'c', message: { role: 'assistant', content: [] } },
-    { type: 'custom_message', id: 'd', parentId: 'c', timestamp: '2026-11-01T00:00:02.000Z', customType: 'omp-superagent', content: 'hello', display: true, details: { requestId: 'r1', source: 'chat-reply' }, attribution: 'agent' },
+    { type: 'custom_message', id: 'd', parentId: 'c', timestamp: '2026-11-01T00:00:02.000Z', customType: 'neo-agent', content: 'hello', display: true, details: { requestId: 'r1', source: 'chat-reply' }, attribution: 'agent' },
   ].map(line => JSON.stringify(line)).join('\n'))
   expect(await isClaudeJournal(omp)).toBe(false)
   const journal = await Journal.create(join(dir, 'sessions'), dir)

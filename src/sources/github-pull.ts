@@ -40,7 +40,7 @@ export function claimPull(ctx: SourceContext, ticketId: string, pr: Pull): strin
   const opened = agentPull(pr, ctx.deployment) && ticketBranch(ticket, pr.head.ref)
   if (!started && !opened) {
     const { login } = ctx.deployment.github
-    return `PR does not belong to this ticket: use the source PR or a PR by ${login} from a branch whose last path segment is OMP_SUPERAGENT_NAME; omit pr_number when no PR exists`
+    return `PR does not belong to this ticket: use the source PR or a PR by ${login} from a branch whose last path segment is NEO_AGENT_NAME; omit pr_number when no PR exists`
   }
   const owner = ctx.tickets.open().find(item => pullsOf(item, true).includes(pr.number))
   if (owner && owner.id !== ticketId) return 'PR already belongs to another active ticket'

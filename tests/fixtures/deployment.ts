@@ -3,7 +3,7 @@ import type { Deployment, Machine } from '../../src/deployment.ts'
 import { githubKind } from '../../src/sources/github.ts'
 
 export const testMachine = (overrides: Partial<Machine> = {}): Machine => ({
-  kernel: 'omp', stateDir: '/tmp/omp-superagent-test', agentDir: '/tmp/omp-superagent-test/omp', promptMaxChars: 100000,
+  kernel: 'omp', stateDir: '/tmp/neo-agent-test', agentDir: '/tmp/neo-agent-test/omp', promptMaxChars: 100000,
   admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000, web: { enabled: false, host: '127.0.0.1', port: 0 }, ...overrides,
 })
 export const testDeployment = (overrides: Partial<Deployment> = {}): Deployment => ({

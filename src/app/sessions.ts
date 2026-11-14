@@ -216,7 +216,7 @@ export class OMPSessions {
     await mkdir(join(stateDir, 'sessions'), { recursive: true, mode: 0o700 })
     if (kind === 'claude') {
       const body = (await readFile(bundledSkills.github.path, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '').trim()
-      this.githubSkillText = `# Skill: omp-superagent-github\n\n${body}`
+      this.githubSkillText = `# Skill: neo-agent-github\n\n${body}`
       return
     }
     const baseSettings = Settings.isolated(SESSION_SETTINGS)
@@ -224,7 +224,7 @@ export class OMPSessions {
     this.modelRegistry = new ModelRegistry(this.authStorage, join(agentDir, 'models.yml'), { settings: baseSettings })
     await this.modelRegistry.refresh()
     await this.checkOmpModels()
-    const skills = await loadSkillsFromDir({ dir: packagePath('skills'), source: 'omp-superagent' })
+    const skills = await loadSkillsFromDir({ dir: packagePath('skills'), source: 'neo-agent' })
     const github = skills.skills.filter(skill => skill.filePath === bundledSkills.github.path)
     if (github.length !== 1) throw new Error(`Expected one bundled GitHub skill at ${bundledSkills.github.path}; found ${github.length}`)
     this.githubSkill = github[0]!
@@ -304,7 +304,7 @@ export class OMPSessions {
   }
 
   private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<KernelSession> {
-    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    if (this.host.closing()) throw new Error('neo-agent is stopping')
     if (role === 'worker' && (!ticket || !liveTicket(ticket))) throw new Error('Worker Session needs a live Ticket')
     const sessionDir = join(this.host.machine.stateDir, 'sessions')
     const stored = this.host.store.get(KV.sessions.files(sessionId))
@@ -366,7 +366,7 @@ export class OMPSessions {
       allowRestrictedCustomTools: true,
       extensions,
       ...role === 'worker' ? { spawns: SUBAGENT, inheritedSessionAgents: [this.subagent] } : {},
-      preloadedPreparedExtensions: extensions.map((factory, index) => ({ path: `<omp-superagent-worker-${index}>`, resolvedPath: `<omp-superagent-worker-${index}>`, factory, error: null })),
+      preloadedPreparedExtensions: extensions.map((factory, index) => ({ path: `<neo-agent-worker-${index}>`, resolvedPath: `<neo-agent-worker-${index}>`, factory, error: null })),
       bindProcessState: false,
       hasUI: false,
       cacheWarming: role === 'worker',
@@ -399,7 +399,7 @@ export class OMPSessions {
 
   /** Claude Code kernel: one persistent Agent SDK query per Session, resumed from its journal. */
   private async openClaude(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<KernelSession> {
-    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    if (this.host.closing()) throw new Error('neo-agent is stopping')
     if (role === 'worker' && (!ticket || !liveTicket(ticket))) throw new Error('Worker Session needs a live Ticket')
     const stored = this.host.store.get(KV.sessions.files(sessionId))
     // A Session last run on OMP starts a new journal: the worker is given its assignment anew, and the main Session keeps its chat history.
@@ -551,18 +551,18 @@ export class OMPSessions {
   async resetOrchestrator(): Promise<void> {
     await this.stop(this.host.masterId, 'Orchestrator Session reset')
     this.host.store.delete(KV.sessions.files(this.host.masterId))
-    await this.ensure(this.host.masterId, this.host.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
+    await this.ensure(this.host.masterId, this.host.machine.stateDir, 'neo-agent orchestrator', 'orchestrator')
   }
 
   /** Reopen the main Session from its transcript, so its system prompt is composed from the current execution environment. */
   async reopenOrchestrator(): Promise<void> {
     await this.stop(this.host.masterId, 'Orchestrator Session reopened')
-    await this.ensure(this.host.masterId, this.host.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')
+    await this.ensure(this.host.masterId, this.host.machine.stateDir, 'neo-agent orchestrator', 'orchestrator')
   }
   /** Run one stateless, in-memory read-only Sidecar turn sharing a single static prefix cache key across all queries. */
   async runSidecar(cwd: string, promptText: string, tools: Tool[], timeoutMs = 90_000): Promise<string> {
     await this.ready
-    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    if (this.host.closing()) throw new Error('neo-agent is stopping')
     const settings = this.host.store.settings()
     const configured = settings.eval.model ?? settings.executor.model
     if (this.kernel === 'claude') {
@@ -603,13 +603,13 @@ export class OMPSessions {
     session.agent.promptCacheKey = `sidecar-${key(this.host.machine.stateDir)}`
     const { promise: ended, resolve, reject } = Promise.withResolvers<void>()
     const timer = setTimeout(() => { reject(new Error(`Sidecar query timed out after ${timeoutMs}ms`)) }, timeoutMs)
-    const onAbort = () => { reject(new Error('omp-superagent stopped during sidecar query')) }
+    const onAbort = () => { reject(new Error('neo-agent stopped during sidecar query')) }
     this.host.lifetime.addEventListener('abort', onAbort, { once: true })
     const unsubscribe = session.subscribe(event => {
       if (event.type === 'agent_end' && event.isTerminal !== false) resolve()
     })
     try {
-      await session.sendCustomMessage({ customType: 'omp-superagent-sidecar', content: promptText, display: false, attribution: 'agent' },
+      await session.sendCustomMessage({ customType: 'neo-agent-sidecar', content: promptText, display: false, attribution: 'agent' },
         { triggerTurn: true, deliverAs: 'steer' })
       await ended
       return session.getLastAssistantText()?.trim() ?? ''
@@ -624,7 +624,7 @@ export class OMPSessions {
   /** Run one stateless, in-memory Watchdog inspection turn with low thinking effort and a pinned static prefix cache key. */
   async runWatchdog(promptText: string, tools: Tool[], timeoutMs = 120_000): Promise<string> {
     await this.ready
-    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    if (this.host.closing()) throw new Error('neo-agent is stopping')
     const settings = this.host.store.settings()
     const configured = settings.eval.model ?? settings.executor.model
     const version = this.host.prompts.current()
@@ -675,7 +675,7 @@ export class OMPSessions {
       if (event.type === 'agent_end' && event.isTerminal !== false) resolve()
     })
     try {
-      await session.sendCustomMessage({ customType: 'omp-superagent-watchdog', content: promptText, display: false, attribution: 'agent' },
+      await session.sendCustomMessage({ customType: 'neo-agent-watchdog', content: promptText, display: false, attribution: 'agent' },
         { triggerTurn: true, deliverAs: 'steer' })
       await ended
       return session.getLastAssistantText()?.trim() ?? ''
@@ -699,13 +699,13 @@ export class OMPSessions {
 
   async stopAll(): Promise<void> {
     const sessions = [...this.loaded.values()]
-    for (const session of sessions) this.delivery.beginDispose(session, 'omp-superagent stopped')
-    await Promise.allSettled(sessions.map(session => this.delivery.stop(session, 'omp-superagent stopped')))
+    for (const session of sessions) this.delivery.beginDispose(session, 'neo-agent stopped')
+    await Promise.allSettled(sessions.map(session => this.delivery.stop(session, 'neo-agent stopped')))
     this.loaded.clear()
   }
 
   dispose(): void {
-    for (const session of this.loaded.values()) this.delivery.beginDispose(session, 'omp-superagent disposed')
+    for (const session of this.loaded.values()) this.delivery.beginDispose(session, 'neo-agent disposed')
     this.loaded.clear()
   }
 }

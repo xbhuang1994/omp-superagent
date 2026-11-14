@@ -113,7 +113,7 @@ function render(messages) {
     const meta = document.createElement('div')
     meta.className = 'message-meta'
     const role = document.createElement('strong')
-    role.textContent = message.role === 'assistant' ? 'OMP' : message.role === 'user' ? '用户' : '事件'
+    role.textContent = message.role === 'assistant' ? 'Neo Agent' : message.role === 'user' ? '用户' : '事件'
     meta.append(role)
     if (message.at) {
       const time = document.createElement('time')

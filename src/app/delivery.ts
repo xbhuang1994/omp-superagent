@@ -21,7 +21,7 @@ interface DeliveryState {
 }
 
 function requestIdOf(entry: SessionEntry): string | undefined {
-  if (entry.type !== 'custom_message' || entry.customType !== 'omp-superagent') return undefined
+  if (entry.type !== 'custom_message' || (entry.customType !== 'neo-agent' && entry.customType !== 'omp-superagent')) return undefined // journals written before the rename
   const details: unknown = entry.details
   if (!details || typeof details !== 'object' || !('requestId' in details)) return undefined
   return typeof details.requestId === 'string' ? details.requestId : undefined
@@ -63,7 +63,7 @@ export class AgentDelivery {
         }, 50)
         return
       }
-      if (event.type !== 'message_end' || event.message.role !== 'custom' || event.message.customType !== 'omp-superagent') return
+      if (event.type !== 'message_end' || event.message.role !== 'custom' || event.message.customType !== 'neo-agent') return
       const details: unknown = event.message.details
       if (details && typeof details === 'object' && 'requestId' in details && typeof details.requestId === 'string') {
         const requestId = details.requestId
@@ -86,7 +86,7 @@ export class AgentDelivery {
     if (session.isDisposed) throw new Error('Append target was disposed')
     if (persisted(session, requestId)) { await session.flushToDisk(); return }
     const details = { requestId, source: presentation.source, ...presentation.attachments?.length ? { attachments: presentation.attachments } : {} }
-    const message = { role: 'custom' as const, customType: 'omp-superagent', content, display: presentation.display,
+    const message = { role: 'custom' as const, customType: 'neo-agent', content, display: presentation.display,
       details, attribution: presentation.attribution, timestamp: Date.now() }
     const hasImage = Array.isArray(content) && content.some(part => part.type === 'image')
     if (hasImage && !session.isStreaming) session.agent.appendMessage(message)
@@ -130,7 +130,7 @@ export class AgentDelivery {
       ? { triggerTurn: true, deliverAs: 'steer' as const } : { triggerTurn: true, deliverAs: 'followUp' as const }
     let running: Promise<boolean>
     try {
-      running = session.sendCustomMessage({ customType: 'omp-superagent', content, display: presentation.display, attribution: presentation.attribution,
+      running = session.sendCustomMessage({ customType: 'neo-agent', content, display: presentation.display, attribution: presentation.attribution,
         details: { requestId, ...(inputIds?.length ? { inputIds } : {}), ...(presentation.source ? { source: presentation.source } : {}),
           ...(presentation.attachments?.length ? { attachments: presentation.attachments } : {}) } }, options)
     } catch (error) {

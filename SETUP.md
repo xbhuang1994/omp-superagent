@@ -19,8 +19,8 @@ Use absolute paths and a new empty state directory. Minimal example:
 
 ```json
 {
-  "stateDir": "/srv/omp-superagent/state",
-  "agentDir": "/srv/omp-superagent/omp",
+  "stateDir": "/srv/neo-agent/state",
+  "agentDir": "/srv/neo-agent/omp",
   "sources": {
     "github": {
       "enabled": true,
@@ -32,7 +32,7 @@ Use absolute paths and a new empty state directory. Minimal example:
   "executor": {
     "model": null,
     "maxWorkers": 3,
-    "prepare": "git clone --quiet /srv/repositories/repo \"$OMP_SUPERAGENT_DIR\""
+    "prepare": "git clone --quiet /srv/repositories/repo \"$NEO_AGENT_DIR\""
   }
 }
 ```

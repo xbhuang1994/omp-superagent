@@ -8,7 +8,7 @@ import type { Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV } from '../kv.ts'
 
-/** Prompt sections the team writes; built-in parts follow omp-superagent defaults until overridden. */
+/** Prompt sections the team writes; built-in parts follow neo-agent defaults until overridden. */
 export const TEAM_SECTIONS = ['communication', 'scope', 'delivery'] as const
 export type TeamSection = typeof TEAM_SECTIONS[number]
 /** Markdown headings for each team section; fixed prompt sections refer to them by these exact names. */
@@ -77,7 +77,7 @@ const fill = (template: string, values: Record<string, string>): string =>
 /** The execution environment part: its template with the variables, or, while setup waits, that it waits. */
 export function environmentSection(config: PromptConfig, variables: Variable[] | undefined): string {
   return variables ? fill(builtIn(config, 'runtime/environment'), { variables: environmentLines(variables) })
-    : 'Execution environment: omp-superagent startup configuration is incomplete.'
+    : 'Execution environment: neo-agent startup configuration is incomplete.'
 }
 /**
  * The main Session's Policy section: the Policy version and accept mode it judges proactive candidates by, and every enabled
@@ -187,7 +187,7 @@ export class Prompts {
     const environment = environmentSection(config, this.environment()), policy = policySection(this.store.settings(), config)
     return { orchestrator: composePrompt(config, 'orchestrator', environment, policy), worker: composePrompt(config, 'worker', environment),
       parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy), worker: promptParts(config, 'worker', environment) },
-      skills: { github: composeSkill(config, 'github'), ...config.skills }, scope: 'Team sections, skills, and overrides of built-in parts. Workers retain repository AGENTS.md. Prompt text does not change omp-superagent authorization, tool permissions, or account wrappers.' }
+      skills: { github: composeSkill(config, 'github'), ...config.skills }, scope: 'Team sections, skills, and overrides of built-in parts. Workers retain repository AGENTS.md. Prompt text does not change neo-agent authorization, tool permissions, or account wrappers.' }
   }
   save(value: unknown, baseRevision: number, source: SettingsOrigin): PromptVersion {
     const config = this.validate(value)

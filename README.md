@@ -1,4 +1,4 @@
-# omp-superagent
+# Neo Agent
 
 **一个能替你干活的"值班程序员"。** 你在 GitHub Issue / PR、本地网页或微信里 @ 它提需求，它先判断"该不该做、谁让做的"，通过后给每个任务开一个独立的 AI 工人，在单独的目录里写代码、跑命令，做完把结果回复到你提问的那个对话里。
 
@@ -22,8 +22,8 @@
 
 ```json
 {
-  "stateDir": "/srv/omp-superagent/state",
-  "agentDir": "/srv/omp-superagent/omp",
+  "stateDir": "/srv/neo-agent/state",
+  "agentDir": "/srv/neo-agent/omp",
   "sources": {
     "chat":   { "enabled": true, "config": {} },
     "github": { "enabled": true,
@@ -35,7 +35,7 @@
   } },
   "eval":     { "mode": "observe", "model": null },
   "executor": { "model": null, "advisor": null, "maxWorkers": 3,
-                "prepare": "git clone --quiet /srv/repositories/repo \"$OMP_SUPERAGENT_DIR\"" }
+                "prepare": "git clone --quiet /srv/repositories/repo \"$NEO_AGENT_DIR\"" }
 }
 ```
 
@@ -44,7 +44,7 @@
 | `policy.…allowed` | 白名单：只有名单里的人能"明确下达"任务 |
 | `eval.mode` | `off` 不主动评估；`observe` 只记录"我本来会做什么"（推荐起步）；`auto` 自动接受规则内的主动任务 |
 | `executor.maxWorkers` | 同时工作的 Worker 上限 |
-| `executor.prepare` | 为每个任务准备目录的 shell 命令，环境变量 `$OMP_SUPERAGENT_DIR` 即任务目录 |
+| `executor.prepare` | 为每个任务准备目录的 shell 命令，环境变量 `$NEO_AGENT_DIR` 即任务目录 |
 | `kernel` | 执行内核：`omp`（默认）或 `claude`（Claude Code，经 Agent SDK）。`claude` 时认证与默认模型取自 `ANTHROPIC_*` 环境变量，`agentDir` 不再使用；`*.model` 的 `model` 直接作为 Claude Code 模型名（如 `sonnet`、`opus` 或网关模型 id），`provider` 被忽略，`null` 用环境默认；`executor.advisor` 在 `claude` 内核下无效。也可在「设置 → 模型 → 执行内核」在线切换：立即生效并跨重启保留，直到启动 JSON 里的 `kernel` 被改成别的值。每个内核有自己独立的一套模型配置（互不共享，默认跟随内核默认），面板只显示当前内核支持的选项 |
 | `*.model` | `null` 用 OMP 默认；或 `{provider, model, thinkingLevel}`；写了不存在的模型会启动失败，不会悄悄回退 |
 | `executor.advisor` | Worker 顾问模型，格式同上；`null` 关闭。开启后第二个模型审阅 Worker 每个回合并插入建议，也可在「设置 → 模型」在线修改 |
@@ -58,9 +58,11 @@ bun run build
 ./lib/cli.js --config /absolute/path/config.json   # 或 bun start -- --config ...
 ```
 
-启动时会校验配置、模型、GitHub 身份与仓库权限，通过后打印 `omp-superagent ready` 和面板地址。`Ctrl-C`/`SIGTERM` 会有序关闭；模型和 GitHub 连接可在面板设置里在线修改，其余配置改动需重启。
+启动时会校验配置、模型、GitHub 身份与仓库权限，通过后打印 `neo-agent ready` 和面板地址。`Ctrl-C`/`SIGTERM` 会有序关闭；模型和 GitHub 连接可在面板设置里在线修改，其余配置改动需重启。
 
 **3. 使用**：在白名单账号下 `@<agent-login> 你的需求`，或直接在网页/微信里发消息。**不要删除 `stateDir` 里的 SQLite 和 JSONL**，它们保证重启后不重复回复。
+
+> **从 omp-superagent 升级**：项目已更名为 Neo Agent（包名与命令为 `neo-agent`）。原有 `stateDir` 可原路径继续使用，无需迁移；但环境变量 `OMP_SUPERAGENT_*` 已改为 `NEO_AGENT_*`，`executor.prepare` 和团队 Prompt 里引用旧变量名的地方需要同步修改。详见 [006 Deployment](docs/006-deployment.md)。
 
 **4. 验证**：`bun run check`（类型检查 + 测试 + 构建）；`bun scripts/omp-smoke.ts lib/cli.js`（离线端到端冒烟，假 provider + 假 `gh`）。
 

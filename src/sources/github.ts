@@ -90,17 +90,17 @@ export const githubKind: SourceKind<GithubConfig> = {
   },
   environment: {
     variables: [
-      { key: 'OMP_SUPERAGENT_GITHUB_REPOSITORY', description: { zh: '这个来源监听的仓库，owner/name。分支最后一段是 OMP_SUPERAGENT_NAME 时关联到工单', en: 'The watched owner/name repository. A PR branch whose last path segment is OMP_SUPERAGENT_NAME binds to the ticket' } },
-      { key: 'OMP_SUPERAGENT_GITHUB_ACCOUNT', description: { zh: '智能体的 GitHub 账号', en: 'The agent GitHub account used by gh' } },
-      { key: 'OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL', description: { zh: '智能体账号的提交邮箱', en: 'Commit email of the agent account' } },
-      { key: 'OMP_SUPERAGENT_GITHUB_NUMBER', description: { zh: '来源 Issue 或 PR 编号', en: 'Source Issue or PR number' } },
-      { key: 'OMP_SUPERAGENT_GITHUB_PR_HEAD', description: { zh: '来源 PR 的 head 引用', en: 'Source PR head ref' } },
+      { key: 'NEO_AGENT_GITHUB_REPOSITORY', description: { zh: '这个来源监听的仓库，owner/name。分支最后一段是 NEO_AGENT_NAME 时关联到工单', en: 'The watched owner/name repository. A PR branch whose last path segment is NEO_AGENT_NAME binds to the ticket' } },
+      { key: 'NEO_AGENT_GITHUB_ACCOUNT', description: { zh: '智能体的 GitHub 账号', en: 'The agent GitHub account used by gh' } },
+      { key: 'NEO_AGENT_GITHUB_COMMIT_EMAIL', description: { zh: '智能体账号的提交邮箱', en: 'Commit email of the agent account' } },
+      { key: 'NEO_AGENT_GITHUB_NUMBER', description: { zh: '来源 Issue 或 PR 编号', en: 'Source Issue or PR number' } },
+      { key: 'NEO_AGENT_GITHUB_PR_HEAD', description: { zh: '来源 PR 的 head 引用', en: 'Source PR head ref' } },
     ],
     values: ({ deployment, trigger }) => {
       const number = trigger?.threads[0]?.source === SOURCE ? Number(trigger.meta.number) || 0 : 0
-      return { OMP_SUPERAGENT_GITHUB_REPOSITORY: deployment.repository, OMP_SUPERAGENT_GITHUB_ACCOUNT: deployment.github.login,
-        OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL: deployment.github.noreply, OMP_SUPERAGENT_GITHUB_NUMBER: number ? String(number) : '',
-        OMP_SUPERAGENT_GITHUB_PR_HEAD: number && trigger?.meta.isPr === true ? `refs/pull/${number}/head` : '' }
+      return { NEO_AGENT_GITHUB_REPOSITORY: deployment.repository, NEO_AGENT_GITHUB_ACCOUNT: deployment.github.login,
+        NEO_AGENT_GITHUB_COMMIT_EMAIL: deployment.github.noreply, NEO_AGENT_GITHUB_NUMBER: number ? String(number) : '',
+        NEO_AGENT_GITHUB_PR_HEAD: number && trigger?.meta.isPr === true ? `refs/pull/${number}/head` : '' }
     },
   },
   facts: (deployment): Record<string, Localized | string> => deployment ? {

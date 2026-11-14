@@ -39,7 +39,7 @@ function config(baseUrl: string): string {
   const path = join(root, 'config.json')
   writeFileSync(path, JSON.stringify({ stateDir, agentDir, web: { enabled: true, host: '127.0.0.1', port: 0 }, sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: join(root, 'gh'), pollSeconds: 60 } } },
     policy: { sources: { github: { allowed: [{ id: 'alice' }] } } }, eval: { mode: 'auto', model: { provider: 'fixture', model: 'fixture' } },
-    executor: { model: { provider: 'fixture', model: 'fixture' }, prepare: `git clone --quiet ${repository} "$OMP_SUPERAGENT_DIR"`, maxWorkers: 1 } }, null, 2))
+    executor: { model: { provider: 'fixture', model: 'fixture' }, prepare: `git clone --quiet ${repository} "$NEO_AGENT_DIR"`, maxWorkers: 1 } }, null, 2))
   return path
 }
 function fakeGh(): void {
@@ -106,7 +106,7 @@ try {
   const before = server.requests.length
   output = ''
   const second = await start(config(server.baseUrl))
-  await until(() => output.includes('omp-superagent ready'), 'restart ready')
+  await until(() => output.includes('neo-agent ready'), 'restart ready')
   await sleep(500)
   await stop(second, 'second')
   if (server.requests.length !== before) throw new Error('Restart repeated model work')

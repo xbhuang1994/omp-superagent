@@ -397,7 +397,7 @@ export class OMPExecutor implements Executor {
 
   private async wakeAfterCancel(ticketId: string, session: KernelSession, note: string, hasRemaining: boolean): Promise<void> {
     const live = () => {
-      if (this.host.closing()) throw new Error('omp-superagent is stopping')
+      if (this.host.closing()) throw new Error('neo-agent is stopping')
       if (this.host.paused()) throw new Later('Processing is paused')
       const current = this.host.store.tickets.get(ticketId)
       if (!current || !liveTicket(current) || !runningAssignment(current) || this.unloadAfterEnd.has(ticketId)) {
@@ -451,7 +451,7 @@ export class OMPExecutor implements Executor {
 
   private async launch(ticket: Ticket, assignment: Assignment): Promise<void> {
     const current = () => {
-      if (this.host.closing()) throw new Error('omp-superagent is stopping')
+      if (this.host.closing()) throw new Error('neo-agent is stopping')
       if (this.host.paused()) throw new Later('Processing is paused')
       const stored = this.host.store.tickets.get(ticket.id)
       return !!stored && liveTicket(stored) && latestAssignment(stored)?.id === assignment.id

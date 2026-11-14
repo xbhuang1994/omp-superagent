@@ -151,7 +151,7 @@ function baseOptions(options: ClaudeOptions, extra: Partial<Options>): Options {
 export async function runClaudeOnce(options: ClaudeOptions, prompt: string, timeoutMs: number, lifetime: AbortSignal, abortResolves = false): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => { controller.abort(new Error(`Claude Code turn timed out after ${timeoutMs}ms`)) }, timeoutMs)
-  const onAbort = () => { controller.abort(new Error('omp-superagent stopped')) }
+  const onAbort = () => { controller.abort(new Error('neo-agent stopped')) }
   lifetime.addEventListener('abort', onAbort, { once: true })
   const run = (options.query ?? sdkQuery)({ prompt, options: baseOptions(options, { persistSession: false, abortController: controller }) })
   let text = '', error: string | undefined

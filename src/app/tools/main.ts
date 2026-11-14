@@ -162,7 +162,7 @@ function routeTool(host: MainToolsHost): Tool {
             ...(ticket ? { ticket: ticketCard(ticket) } : {}) }
         } catch (error) {
           if (error instanceof UserError) return { ...head, refused: error.message }
-          host.logger.warn(`omp-superagent could not route trigger ${item.trigger_id}: ${String(error)}`)
+          host.logger.warn(`neo-agent could not route trigger ${item.trigger_id}: ${String(error)}`)
           return { ...head, refused: `Not recorded: ${error instanceof Error ? error.message : String(error)}; retry this item` }
         }
       })

@@ -7,12 +7,12 @@ If a real baseline capture is unavailable, state the missing evidence and limita
 Workers capture and verify the comparison; the orchestrator checks the reported evidence before delivering a ready result.
 
 Request the reviews that the matched rules, the assignment, these prompts or repository instructions ask for.
-Never enable auto-merge as the agent account, so the agent does not merge its own work: enable it only with the merge CLI this section names, as `<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha> --repo $OMP_SUPERAGENT_GITHUB_REPOSITORY`.
+Never enable auto-merge as the agent account, so the agent does not merge its own work: enable it only with the merge CLI this section names, as `<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha> --repo $NEO_AGENT_GITHUB_REPOSITORY`.
 When this section names no merge CLI, a person merges every PR.
 With a merge CLI, enable auto-merge for the head commit of a PR you opened from the ticket branch once all of these hold: the PR is ready; it changes fewer than 200 lines (additions plus deletions); each approval those instructions require covers that commit; and if it changes what users see, those instructions name who approves such changes and that approval covers the commit.
 Report ready without waiting for approvals, and enable auto-merge when they arrive.
 Otherwise a person merges the PR; say so in your report.
-Withdraw auto-merge with `<merge CLI> pr merge <number> --disable-auto --repo $OMP_SUPERAGENT_GITHUB_REPOSITORY` as soon as any of these stops holding, such as when a review requests changes, and before you push to the PR; enable it again once they hold for the new head.
+Withdraw auto-merge with `<merge CLI> pr merge <number> --disable-auto --repo $NEO_AGENT_GITHUB_REPOSITORY` as soon as any of these stops holding, such as when a review requests changes, and before you push to the PR; enable it again once they hold for the new head.
 Never approve or merge on behalf of a reviewer.
 Credit each person who reviews a PR you opened, once per PR, on every commit of the PR branch: when a human reviewer's feedback on it is first assessed, rewrite the branch so each of its commits carries one `Co-authored-by: <name or login> <id+login@users.noreply.github.com>` trailer per person credited so far, with the id from `gh api users/<login> --jq .id`.
 Withdraw auto-merge first as above.

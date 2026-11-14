@@ -59,7 +59,7 @@ afterEach(async () => {
 
 it('serves a secure static panel and persists a real OMP chat round trip', async () => {
   const page = await fetch(panel.url)
-  expect(await page.text()).toContain('OMP 对话面板')
+  expect(await page.text()).toContain('Neo Agent 对话面板')
   expect(page.headers.get('content-security-policy')).toContain("default-src 'self'")
   expect((await fetch(`${panel.url}api/health`)).status).toBe(200)
   const response = await fetch(`${panel.url}api/chat`, { method: 'POST', headers: { 'content-type': 'application/json' },

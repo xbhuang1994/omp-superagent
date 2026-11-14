@@ -41,7 +41,7 @@ describe('Commands', () => {
 describe('GitHub Channel', () => {
   it('reconciles an existing marker without posting a duplicate', async () => {
     const value = commands()
-    vi.spyOn(value, 'pages').mockResolvedValue([{ body: '<!-- omp-superagent:stable-operation -->', user: { login: 'agent-bot' } }])
+    vi.spyOn(value, 'pages').mockResolvedValue([{ body: '<!-- neo-agent:stable-operation -->', user: { login: 'agent-bot' } }])
     const gh = vi.spyOn(value, 'gh')
     expect(await sources.send(reply, value)).toBe('sent')
     expect(gh).not.toHaveBeenCalled()
