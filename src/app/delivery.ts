@@ -1,6 +1,6 @@
 /** Idempotent, file-backed custom-message delivery to OMP sessions. */
-import type { AgentSession, SessionEntry } from '@oh-my-pi/pi-coding-agent'
 import type { ImageContent, TextContent } from '@oh-my-pi/pi-ai'
+import type { KernelEntry as SessionEntry, KernelSession } from '../kernel/types.ts'
 import { Later } from './effects.ts'
 type DeliveryContent = string | (TextContent | ImageContent)[]
 
@@ -27,15 +27,15 @@ function requestIdOf(entry: SessionEntry): string | undefined {
   return typeof details.requestId === 'string' ? details.requestId : undefined
 }
 
-function persisted(session: AgentSession, requestId: string): boolean {
+function persisted(session: KernelSession, requestId: string): boolean {
   return session.sessionManager.getBranch().some(entry => requestIdOf(entry) === requestId)
 }
 
 /** Tracks SessionEntry visibility separately from the model run returned by sendCustomMessage. */
 export class AgentDelivery {
-  private readonly states = new WeakMap<AgentSession, DeliveryState>()
+  private readonly states = new WeakMap<KernelSession, DeliveryState>()
 
-  bind(session: AgentSession, acceptInputs: (inputIds: string[]) => void): void {
+  bind(session: KernelSession, acceptInputs: (inputIds: string[]) => void): void {
     if (this.states.has(session)) return
     const pending = new Map<string, Pending>()
     const onEntry = (entry: SessionEntry): void => {
@@ -76,12 +76,12 @@ export class AgentDelivery {
     this.states.set(session, { pending, acceptInputs, unhook, onEntry, installed, previous, unsubscribe })
   }
 
-  async holds(session: AgentSession, requestId: string): Promise<boolean> {
+  async holds(session: KernelSession, requestId: string): Promise<boolean> {
     const state = this.states.get(session)
     return persisted(session, requestId) || !!state?.pending.has(requestId)
   }
   /** Append a visible custom message without queuing, steering, or starting a turn, even while the agent is busy. */
-  async append(session: AgentSession, requestId: string, content: DeliveryContent,
+  async append(session: KernelSession, requestId: string, content: DeliveryContent,
     presentation: { display: boolean; attribution: 'agent' | 'user'; source: string; attachments?: { name: string; mediaType: string }[] }): Promise<void> {
     if (session.isDisposed) throw new Error('Append target was disposed')
     if (persisted(session, requestId)) { await session.flushToDisk(); return }
@@ -94,7 +94,7 @@ export class AgentDelivery {
     await session.flushToDisk()
   }
 
-  async send(session: AgentSession, requestId: string, content: DeliveryContent, mode: 'queue' | 'steer' | { inject: string }, signal: AbortSignal,
+  async send(session: KernelSession, requestId: string, content: DeliveryContent, mode: 'queue' | 'steer' | { inject: string }, signal: AbortSignal,
     inputIds: string[] | undefined, authorize?: () => void, accepted?: () => void,
     presentation: { display: boolean; attribution: 'agent' | 'user'; source?: string; attachments?: { name: string; mediaType: string }[] } = { display: false, attribution: 'agent' }): Promise<void> {
     signal.throwIfAborted()
@@ -154,7 +154,7 @@ export class AgentDelivery {
   }
 
   /** Synchronously bars new turns and rejects all unconfirmed sends before asynchronous disposal begins. */
-  beginDispose(session: AgentSession, reason: string): void {
+  beginDispose(session: KernelSession, reason: string): void {
     session.beginDispose()
     const state = this.states.get(session)
     if (!state) return
@@ -162,7 +162,7 @@ export class AgentDelivery {
     state.pending.clear()
   }
 
-  async stop(session: AgentSession, reason: string): Promise<void> {
+  async stop(session: KernelSession, reason: string): Promise<void> {
     this.beginDispose(session, reason)
     await session.dispose()
     const state = this.states.get(session)

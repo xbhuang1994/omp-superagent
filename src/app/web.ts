@@ -74,7 +74,7 @@ export class WebPanel {
   constructor(private readonly options: WebOptions, private readonly masterId: string,
     private readonly sessions: Pick<OMPSessions, 'get'>, private readonly wechat: Pick<WeChatBridge, 'status' | 'connect' | 'verify' | 'disconnect'>,
     private readonly resetSession: () => Promise<void>, private readonly chat: Pick<ChatSource, 'receiveWeb'>, private readonly workers: Pick<WorkerView, 'list' | 'detail'>,
-    private readonly models: Pick<ModelSettings, 'view' | 'update'>, private readonly github: Pick<GithubConnection, 'view' | 'update'>) {}
+    private readonly models: Pick<ModelSettings, 'view' | 'update' | 'setKernel'>, private readonly github: Pick<GithubConnection, 'view' | 'update'>) {}
 
   get url(): string { return `http://${this.options.host}:${this.actualPort}/` }
 
@@ -114,6 +114,7 @@ export class WebPanel {
       }
       if (request.method === 'GET' && path === '/api/settings/models') return this.json(response, 200, await this.models.view())
       if (request.method === 'PUT' && path === '/api/settings/models') return this.json(response, 200, await this.models.update(JSON.parse(await this.body(request))))
+      if (request.method === 'PUT' && path === '/api/settings/kernel') return this.json(response, 200, await this.models.setKernel(JSON.parse(await this.body(request))))
       if (request.method === 'GET' && path === '/api/settings/github') return this.json(response, 200, this.github.view())
       if (request.method === 'PUT' && path === '/api/settings/github') return this.json(response, 200, await this.github.update(JSON.parse(await this.body(request))))
       if (request.method === 'POST' && path === '/api/session/reset') { await this.resetSession(); return this.json(response, 200, { reset: true }) }
@@ -160,8 +161,8 @@ export class WebPanel {
 
   private messages(): PanelMessage[] {
     const session = this.sessions.get(this.masterId)
-    const messages = session?.sessionManager.getBranch().flatMap<AgentMessage>(entry => entry.type === 'message' ? [entry.message]
-      : entry.type === 'custom_message' ? [{ ...entry, timestamp: Date.parse(entry.timestamp), role: 'custom' as const }] : []) ?? []
+    const messages = session?.sessionManager.getBranch().flatMap<AgentMessage>(entry => entry.type === 'message' ? [entry.message as AgentMessage]
+      : entry.type === 'custom_message' ? [{ ...entry, timestamp: Date.parse(entry.timestamp), role: 'custom' as const } as AgentMessage] : []) ?? []
     return messages.flatMap((message, index) => {
       const text = messageText(message)
       if (!text) return []

@@ -12,6 +12,7 @@ const absolute = (description: string) => z.string().regex(/^\//).describe(`${de
 /** Startup JSON is the only runtime settings source. */
 export const Config = z.object({
   stateDir: absolute('Directory for the database, locks, worker shims, sessions and, by default, ticket directories.'),
+  kernel: z.enum(['omp', 'claude']).default('omp').describe('Agent execution kernel: OMP, or Claude Code through the Agent SDK (model and credentials come from the ANTHROPIC_* environment).'),
   agentDir: absolute('Directory for OMP authentication, models and agent state.').optional(),
   promptMaxChars: z.number().int().min(LIMITS.promptMaxChars.min).max(LIMITS.promptMaxChars.max).default(100000),
   admissionContextMaxPages: z.number().int().min(LIMITS.admissionContextMaxPages.min).max(LIMITS.admissionContextMaxPages.max).default(10),
@@ -21,6 +22,7 @@ export const Config = z.object({
 }).strict()
 export type DeploymentConfig = z.infer<typeof Config>
 export interface Machine {
+  kernel: 'omp' | 'claude'
   stateDir: string
   agentDir: string
   promptMaxChars: number
@@ -31,7 +33,7 @@ export interface Machine {
 
 export function machineOf(config: DeploymentConfig): Machine {
   const parsed = Config.parse(config)
-  return { stateDir: parsed.stateDir, agentDir: parsed.agentDir ?? join(parsed.stateDir, 'omp'), promptMaxChars: parsed.promptMaxChars,
+  return { kernel: parsed.kernel, stateDir: parsed.stateDir, agentDir: parsed.agentDir ?? join(parsed.stateDir, 'omp'), promptMaxChars: parsed.promptMaxChars,
     admissionContextMaxPages: parsed.admissionContextMaxPages, admissionContextTimeoutMs: parsed.admissionContextTimeoutMs, web: parsed.web }
 }
 

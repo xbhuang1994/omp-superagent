@@ -45,6 +45,7 @@
 | `eval.mode` | `off` 不主动评估；`observe` 只记录"我本来会做什么"（推荐起步）；`auto` 自动接受规则内的主动任务 |
 | `executor.maxWorkers` | 同时工作的 Worker 上限 |
 | `executor.prepare` | 为每个任务准备目录的 shell 命令，环境变量 `$OMP_SUPERAGENT_DIR` 即任务目录 |
+| `kernel` | 执行内核：`omp`（默认）或 `claude`（Claude Code，经 Agent SDK）。`claude` 时认证与默认模型取自 `ANTHROPIC_*` 环境变量，`agentDir` 不再使用；`*.model` 的 `model` 直接作为 Claude Code 模型名（如 `sonnet`、`opus` 或网关模型 id），`provider` 被忽略，`null` 用环境默认；`executor.advisor` 在 `claude` 内核下无效。也可在「设置 → 模型 → 执行内核」在线切换：立即生效并跨重启保留，直到启动 JSON 里的 `kernel` 被改成别的值。每个内核有自己独立的一套模型配置（互不共享，默认跟随内核默认），面板只显示当前内核支持的选项 |
 | `*.model` | `null` 用 OMP 默认；或 `{provider, model, thinkingLevel}`；写了不存在的模型会启动失败，不会悄悄回退 |
 | `executor.advisor` | Worker 顾问模型，格式同上；`null` 关闭。开启后第二个模型审阅 Worker 每个回合并插入建议，也可在「设置 → 模型」在线修改 |
 | `web` | `{enabled, host, port}`，`port: 0` 为随机端口 |

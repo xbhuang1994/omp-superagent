@@ -33,3 +33,13 @@ On restart, running Assignments call `assignmentInterrupted()`: settled work res
 Workspace `prepare` runs through `execFile` as `sh -c` with a ten-minute timeout and Ticket environment. Failure does not auto-retry, because an existing directory counts as prepared and a retry could treat partial output as valid. Local/worktree credential and HTTP-header overrides are rejected.
 
 Runtime shutdown stops watcher/passes, synchronously bars every Session from starting new work, disposes them, drains Effects, restores environment, closes SQLite and releases the lock.
+
+## Execution kernels
+
+`kernel` in startup JSON selects the runtime behind every Session. `omp` runs OMP `AgentSession`s. `claude` runs Claude Code through the Agent SDK: one long-lived streaming-input `query()` per Session, resumed by its SDK session id from a JSONL journal (`src/kernel/journal.ts`) that is also the delivery barrier and Web transcript. Both satisfy the `KernelSession` contract in `src/kernel/types.ts`, so delivery, executor and Watchdog are kernel-agnostic.
+
+On the Claude Code kernel: application tools are an in-process MCP server (`mcp__omp__<name>`, prompts are rewritten); the Ticket guard is a `PreToolUse` hook that also covers subagents; `ticket-task` is an SDK agent definition; a `run_in_background` Bash command or subagent is a background job whose end wakes the worker, and `session_state_changed` plus `background_tasks_changed` drive `agent_end` with `awaitingAsyncWork`. `acknowledgeDeliveries` makes the Session interrupt and swallow the wake its job would cause; `cancel` calls `stopTask`. Differences: no advisor model, no `task.maxConcurrency`/depth settings, and shell job process ids are the Claude Code process's descendants.
+
+The panel switches the kernel live (`PUT /api/settings/kernel`). The choice is durable and holds until the startup JSON names another kernel than it did when the choice was made. A switch initializes the target kernel first and is refused, leaving the kernel unchanged, when it cannot start, such as a configured model OMP does not know. The main Session reopens on the new kernel with its visible chat transcript and an empty model context; a loaded worker finishes on the kernel it was opened with, and its next load uses the new kernel and is given its assignment anew.
+
+Each kernel has its own model choices, which follow the kernel default until set and are never shared: the settings hold the current kernel's, the other kernel's wait in KV and change places on a switch, in the panel or by the startup JSON. The panel shows only what the current kernel supports; Claude Code has no advisor model and no `minimal` thinking level, and an update naming either is dropped or refused.

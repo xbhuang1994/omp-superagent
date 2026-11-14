@@ -92,12 +92,22 @@ export class Runtime implements SourceHost {
       const written = this.written = { models: { eval: this.startup.eval.model, executor: this.startup.executor.model, advisor: this.startup.executor.advisor },
         github: this.startup.sources.github ?? null }
       const saved = store.settings()
+      // The panel's kernel choice holds likewise, until the startup JSON names another kernel than it did.
+      const chosen = store.get(KV.runtime.kernel)
+      const kernel = chosen && store.get(KV.runtime.startupKernel) === machine.kernel ? chosen : machine.kernel
+      // Each kernel has its own model choices: when the startup JSON moves the service to the other kernel, the saved ones change places.
+      let held = { eval: saved.eval.model, executor: saved.executor.model, advisor: saved.executor.advisor }
+      if (chosen && chosen !== kernel) {
+        store.set(KV.runtime.kernelModels(chosen), held)
+        held = store.get(KV.runtime.kernelModels(kernel)) ?? { eval: null, executor: null, advisor: null }
+      }
+      store.set(KV.runtime.kernel, kernel)
       const models = store.get(KV.runtime.startupModels)
       if (models) {
         for (const role of ['eval', 'executor'] as const) {
-          if (JSON.stringify(written.models[role]) === JSON.stringify(models[role])) this.startup[role].model = saved[role].model
+          if (JSON.stringify(written.models[role]) === JSON.stringify(models[role])) this.startup[role].model = held[role]
         }
-        if (JSON.stringify(written.models.advisor) === JSON.stringify(models.advisor ?? null)) this.startup.executor.advisor = saved.executor.advisor
+        if (JSON.stringify(written.models.advisor) === JSON.stringify(models.advisor ?? null)) this.startup.executor.advisor = held.advisor
       }
       const github = store.get(KV.runtime.startupGithub)
       if (github !== undefined && saved.sources.github && JSON.stringify(written.github) === JSON.stringify(github)) this.startup.sources.github = saved.sources.github
@@ -114,7 +124,7 @@ export class Runtime implements SourceHost {
       const links: LinkHost = { store, links: this.sourceLinks, commands, sources, lifetime: this.lifetime }
       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
-      const sessions = this.sessions = new OMPSessions({ store, prompts, effects, machine, masterId, lifetime: this.lifetime,
+      const sessions = this.sessions = new OMPSessions({ store, prompts, effects, machine: { ...machine, kernel }, masterId, lifetime: this.lifetime,
         closing: () => this.closing(), environment, watchdogEnvironment: envVariables,
         engine: {
           inputsDelivered: (ticketId, assignmentId, inputIds) => this.engine.inputsDelivered(ticketId, assignmentId, inputIds),
@@ -216,6 +226,7 @@ export class Runtime implements SourceHost {
     }
     // Recorded once the settings they were compared with are saved, so a start that failed before here compares again.
     this.store.set(KV.runtime.startupModels, this.written.models)
+    this.store.set(KV.runtime.startupKernel, this.machine.kernel)
     this.store.set(KV.runtime.startupGithub, this.written.github)
     await this.sessions.ready
     await this.sessions.ensure(this.masterId, this.machine.stateDir, 'omp-superagent orchestrator', 'orchestrator')

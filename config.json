@@ -1,5 +1,6 @@
 {
   "stateDir": "/nvme/state/omp-superagent",
+  "kernel": "claude",
   "agentDir": "/home/henry/.omp/agent",
   "web": {
     "enabled": true,

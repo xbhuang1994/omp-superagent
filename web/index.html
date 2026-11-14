@@ -84,25 +84,33 @@
       </nav>
       <section id="settings-models" class="settings-page" role="tabpanel">
         <h3>模型配置</h3>
-        <p class="settings-intro">分别选择 orchestrator 和后台 worker 使用的模型，以及审阅 worker 每个回合的顾问模型。保存后立即应用，并跨重启保留。</p>
+        <p class="settings-intro">分别选择 orchestrator 和后台 worker 使用的模型，以及审阅 worker 每个回合的顾问模型。每个执行内核有自己独立的一套模型配置，默认跟随内核默认。保存后立即应用，并跨重启保留。</p>
         <form id="model-form" class="model-form">
+          <fieldset class="model-card">
+            <legend>执行内核</legend>
+            <label for="kernel-select">运行 orchestrator 与 worker 的 agent 内核</label>
+            <select id="kernel-select"><option value="omp">OMP (Oh My Pi)</option><option value="claude">Claude Code</option></select>
+            <p id="kernel-hint" class="settings-intro"></p>
+          </fieldset>
           <fieldset class="model-card">
             <legend>Orchestrator</legend>
             <label for="eval-model">评估与路由模型</label>
-            <select id="eval-model"><option value="">跟随 OMP 默认</option></select>
+            <select id="eval-model"><option value="">跟随内核默认</option></select>
             <label for="eval-thinking">Thinking level</label>
-            <select id="eval-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
+            <select id="eval-thinking"></select>
           </fieldset>
           <fieldset class="model-card">
             <legend>Worker</legend>
             <label for="executor-model">后台执行模型</label>
-            <select id="executor-model"><option value="">跟随 OMP 默认</option></select>
+            <select id="executor-model"><option value="">跟随内核默认</option></select>
             <label for="executor-thinking">Thinking level</label>
-            <select id="executor-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
+            <select id="executor-thinking"></select>
+            <div id="advisor-fields">
             <label for="advisor-model">顾问模型（审阅每个 worker 回合并插入建议）</label>
             <select id="advisor-model"><option value="">关闭</option></select>
             <label for="advisor-thinking">顾问 Thinking level</label>
-            <select id="advisor-thinking"><option value="auto">Auto</option><option value="off">Off</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select>
+            <select id="advisor-thinking"></select>
+            </div>
           </fieldset>
           <div class="model-actions"><span id="model-feedback" class="feedback" role="status"></span><button id="model-save" type="submit">保存并应用</button></div>
         </form>

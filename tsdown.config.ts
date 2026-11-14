@@ -9,5 +9,5 @@ export default defineConfig({
   target: 'es2024',
   dts: true,
   clean: true,
-  deps: { neverBundle: ['@oh-my-pi/pi-coding-agent', 'zod', 'proper-lockfile'] },
+  deps: { neverBundle: ['@oh-my-pi/pi-coding-agent', '@anthropic-ai/claude-agent-sdk', 'zod', 'proper-lockfile'] },
 })

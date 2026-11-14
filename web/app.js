@@ -370,9 +370,27 @@ function fillModelOptions(select, current, available, fallbackText) {
     select.value = value
   } else select.value = ''
 }
+const kernelSelect = document.querySelector('#kernel-select')
+const kernelHint = document.querySelector('#kernel-hint')
+const advisorFields = document.querySelector('#advisor-fields')
+const THINKING_LABELS = { auto: 'Auto', off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max' }
+const KERNEL_HINTS = {
+  omp: '模型来自 OMP agentDir 的 provider 配置。',
+  claude: '经 Agent SDK 运行 Claude Code：认证与默认模型取自 ANTHROPIC_* 环境，只使用模型名（provider 被忽略）。',
+}
 function renderModelSettings(data) {
+  kernelSelect.value = data.kernel
+  kernelHint.textContent = `${KERNEL_HINTS[data.kernel] ?? ''} 切换立即生效并跨重启保留，下方模型配置随之换成该内核自己的一套：orchestrator 会话在新内核上重开（聊天记录保留、模型上下文重新开始），运行中的 worker 在原内核上跑完当前加载。`
+  // Only what the current kernel supports is shown.
+  advisorFields.hidden = !data.supports.advisor
   for (const role of ['eval', 'executor', 'advisor']) {
-    fillModelOptions(modelSelects[role], data.current[role], data.available, role === 'advisor' ? '关闭' : '跟随 OMP 默认')
+    thinkingSelects[role].replaceChildren(...data.supports.thinkingLevels.map(level => {
+      const option = document.createElement('option')
+      option.value = level
+      option.textContent = THINKING_LABELS[level] ?? level
+      return option
+    }))
+    fillModelOptions(modelSelects[role], data.current[role], data.available, role === 'advisor' ? '关闭' : '跟随内核默认')
     thinkingSelects[role].value = data.current[role]?.thinkingLevel ?? 'auto'
   }
 }
@@ -386,6 +404,21 @@ async function refreshModels() {
   } catch (error) { modelFeedback.textContent = error instanceof Error ? error.message : String(error) }
   finally { modelSave.disabled = false }
 }
+kernelSelect.addEventListener('change', async () => {
+  const kernel = kernelSelect.value
+  kernelSelect.disabled = modelSave.disabled = true
+  modelFeedback.textContent = '正在切换内核…'
+  try {
+    const response = await fetch('/api/settings/kernel', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kernel }) })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
+    renderModelSettings(data)
+    modelFeedback.textContent = `已切换到 ${kernel === 'claude' ? 'Claude Code' : 'OMP'}`
+  } catch (error) {
+    modelFeedback.textContent = error instanceof Error ? error.message : String(error)
+    await refreshModels()
+  } finally { kernelSelect.disabled = modelSave.disabled = false }
+})
 modelForm.addEventListener('submit', async event => {
   event.preventDefault()
   modelSave.disabled = true

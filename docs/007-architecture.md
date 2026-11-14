@@ -45,6 +45,7 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 | --- | --- |
 | `src/cli.ts`, `src/index.ts`, `src/deployment.ts`, `src/setup.ts`, `src/policy.ts`, `src/limits.ts`, `src/admission.ts`, `src/kv.ts` | Entry/configuration |
 | `src/app/runtime.ts`, `src/app/sessions.ts`, `src/app/delivery.ts`, `src/app/effects.ts`, `src/app/passes.ts`, `src/app/sidecar.ts`, `src/app/watchdog.ts`, `src/app/web.ts`, `src/app/wechat.ts`, `src/app/wechat-protocol.ts`, `src/app/workers.ts`, `src/app/model-settings.ts`, `src/app/github-connection.ts`, `web/index.html`, `web/app.js`, `web/style.css` | Runtime/Sessions/Sidecar/Watchdog/Web panel/WeChat/Worker/Settings views |
+| `src/kernel/types.ts`, `src/kernel/journal.ts`, `src/kernel/claude.ts` | Execution kernels (Claude Code) |
 | `src/executor/omp.ts`, `src/app/execution-environment.ts`, `src/app/outbox.ts`, `src/app/notices.ts` | Domain execution |
 | `src/app/assessment.ts`, `src/app/resources.ts`, `src/app/cards.ts`, `src/app/context.ts`, `src/app/links.ts` | Assessment/resources |
 | `src/app/prompts.ts`, `src/app/skill-files.ts`, `src/app/cache.ts`, `src/app/versions.ts`, `src/app/store.ts`, `src/app/store-read.ts`, `src/app/source-context.ts` | Prompt/state helpers |
@@ -64,6 +65,7 @@ Ticket stop synchronously calls `beginDispose()` before awaiting disposal. Runti
 | --- | --- |
 | `tests/omp-sessions.spec.ts`, `tests/omp-executor.spec.ts`, `tests/sidecar.spec.ts`, `tests/watchdog.spec.ts`, `tests/web-panel.spec.ts`, `tests/wechat.spec.ts`, `tests/chat-source.spec.ts`, `tests/worker-panel.spec.ts`, `tests/model-settings.spec.ts`, `tests/github-settings.spec.ts` | Real OMP Sessions/delivery and subagents, executor slots and background work, read-only Sidecar and burst coalescing, Watchdog control loop, Web API, WeChat iLink/CDN, chat Ticket flow, worker progress, model settings and GitHub connection settings |
 | `tests/fixtures/omp-openai-server.ts`, `tests/fixtures/deployment.ts`, `tests/fixtures/git.ts`, `tests/fixtures/async.ts`, `tests/fixtures/web-panel-fixture.ts` | CLI/provider/browser fixtures |
+| `tests/claude-kernel.spec.ts` | Claude Code kernel |
 | `tests/deployment.spec.ts`, `tests/environment.spec.ts`, `tests/commands.spec.ts` | Deployment/environment/commands |
 | `tests/policy.spec.ts`, `tests/core-engine.spec.ts`, `tests/assessment.spec.ts` | Policy/engine/assessment |
 | `tests/store.spec.ts`, `tests/effects.spec.ts`, `tests/timeline.spec.ts` | Store/effects/timeline |

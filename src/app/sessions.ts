@@ -4,7 +4,8 @@ import { AgentRegistry, ModelRegistry, SessionManager, Settings, createAgentSess
 import { getBundledAgent } from '@oh-my-pi/pi-coding-agent/task/agents'
 import { discoverAgents } from '@oh-my-pi/pi-coding-agent/task/discovery'
 import type { ImageContent, TextContent } from '@oh-my-pi/pi-ai'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import z from 'zod'
 import { key, liveTicket, runningAssignment, type EngineForExecutor, type Ticket } from '../core/index.ts'
@@ -20,6 +21,9 @@ import { environmentSection, type Prompts } from './prompts.ts'
 import { bundledSkills } from './skill-files.ts'
 import type { Store } from './store.ts'
 import type { Tool } from './tools/tool.ts'
+import { ClaudeSession, effortOf, listClaudeModels, rewriteToolNames, runClaudeOnce, type ClaudeOptions, type Effort } from '../kernel/claude.ts'
+import { isClaudeJournal, Journal } from '../kernel/journal.ts'
+import type { KernelKind, KernelSession } from '../kernel/types.ts'
 import type { RoleModel } from '../policy.ts'
 
 const SESSION_SETTINGS = {
@@ -50,6 +54,24 @@ const WORKER_SETTINGS = {
   'task.maxRecursionDepth': 2,
 } as const
 const WORK_TOOLS = ['read', 'bash', 'edit', 'write']
+const WORK_TOOLS_CLAUDE = ['Read', 'Bash', 'Edit', 'Write', 'Agent', 'TaskStop']
+const MAX_SUBAGENTS = 8
+/** Whether the repository defines a Claude Code agent that would replace the ticket subagent. */
+function overridesSubagent(cwd: string): boolean {
+  const dir = join(cwd, '.claude', 'agents')
+  if (!existsSync(dir)) return false
+  try {
+    return readdirSync(dir, { recursive: true, encoding: 'utf8' }).some(name => name.endsWith('.md')
+      && new RegExp(`^name:\\s*["']?${SUBAGENT}["']?\\s*$`, 'm').test(readFileSync(join(dir, name), 'utf8').slice(0, 2000)))
+  } catch { return false }
+}
+const SUBAGENT_PROMPT = 'You are a helper for one independent slice of a larger ticket, working in the ticket directory. Do exactly the slice you were given with your tools, '
+  + 'verify it, and finish with a concise report of what you changed or found. You cannot report to or message anyone; your final answer goes back to the worker that spawned you.'
+const CLAUDE_MAIN_NOTE = 'Runtime note: you run in Claude Code. Tool names above map to `Read` and `Bash`; application tools are exposed as `mcp__omp__<name>`.'
+const CLAUDE_WORKER_NOTE = 'Runtime note: you run in Claude Code. Tool names above map to `Read`, `Bash`, `Edit` and `Write`; application tools are exposed as `mcp__omp__<name>`. '
+  + 'Spawn subagents (the `task` tool above) with `Agent` and `subagent_type: "ticket-task"`, setting `run_in_background: true` for long work; at most 8 run at once. '
+  + 'There is no `timeout: 0`: run any command that may take longer than a minute with `Bash` and `run_in_background: true`, and stop one you no longer need with `TaskStop`. '
+  + 'A finished background command or subagent wakes you in this Session with its result; there is no `wait` tool, so end your turn to wait for it.'
 /**
  * The only agent a worker may spawn. OMP's bundled `task` agent declares no tools, so under the worker's restricted tool
  * list it would get none; this one keeps its prompt with the worker's work tools and no model of its own, so it runs on the
@@ -113,7 +135,7 @@ export interface OMPSessionsHost {
   readonly prompts: Pick<Prompts, 'current' | 'compose'>
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   readonly engine: Pick<EngineForExecutor, 'inputsDelivered' | 'inputsRead'>
-  readonly machine: Pick<Machine, 'stateDir' | 'agentDir'>
+  readonly machine: Pick<Machine, 'stateDir' | 'agentDir'> & { kernel?: KernelKind }
   readonly masterId: string
   readonly lifetime: AbortSignal
   closing(): boolean
@@ -124,32 +146,84 @@ export interface OMPSessionsHost {
 
 /** Owns shared OMP authentication/models and one private AgentRegistry per Session. */
 export class OMPSessions {
-  readonly ready: Promise<void>
-  private readonly loaded = new Map<string, AgentSession>()
-  private readonly loading = new Map<string, Promise<AgentSession>>()
+  private readonly prepared = new Map<KernelKind, Promise<void>>()
+  private current: KernelKind
+  private switching: Promise<void> = Promise.resolve()
+  private readonly loaded = new Map<string, KernelSession>()
+  private readonly loading = new Map<string, Promise<KernelSession>>()
   private readonly delivery = new AgentDelivery()
   private authStorage!: AuthStorage
   private modelRegistry!: ModelRegistry
   private githubSkill!: Skill
   private subagent!: AgentDefinition
+  private githubSkillText = ''
 
   constructor(private readonly host: OMPSessionsHost) {
-    this.ready = this.initialize()
+    this.current = host.machine.kernel ?? 'omp'
+    void this.ready.catch(() => {})
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
   }
 
-  private async initialize(): Promise<void> {
-    const { agentDir, stateDir } = this.host.machine
-    await mkdir(join(stateDir, 'sessions'), { recursive: true, mode: 0o700 })
-    const baseSettings = Settings.isolated(SESSION_SETTINGS)
-    this.authStorage = await discoverAuthStorage(agentDir, { settings: baseSettings, cwd: stateDir })
-    this.modelRegistry = new ModelRegistry(this.authStorage, join(agentDir, 'models.yml'), { settings: baseSettings })
-    await this.modelRegistry.refresh()
+  /** The kernel new Sessions open on; a loaded Session stays on the kernel it was opened with. */
+  get kernel(): KernelKind { return this.current }
+  /** Settles once the current kernel is initialized. */
+  get ready(): Promise<void> { return this.prepare(this.current) }
+  private prepare(kind: KernelKind): Promise<void> {
+    let ready = this.prepared.get(kind)
+    if (!ready) {
+      ready = this.initialize(kind)
+      this.prepared.set(kind, ready)
+      // A failed start is retried on the next use, such as a later switch after the configuration is fixed.
+      ready.catch(() => { if (this.prepared.get(kind) === ready) this.prepared.delete(kind) })
+    }
+    return ready
+  }
+
+  /**
+   * Switch the kernel for Sessions opened from now on, and reopen the main Session on it with its chat history. A loaded
+   * worker finishes on its kernel; its next load uses the new one and is given its assignment anew.
+   * @throws when the kernel cannot start, such as a configured model OMP does not know; the kernel is then unchanged.
+   */
+  async setKernel(kind: KernelKind): Promise<void> {
+    const run = this.switching = this.switching.catch(() => {}).then(async () => {
+      if (kind === this.current) return
+      await this.prepare(kind)
+      if (kind === 'omp') await this.checkOmpModels()
+      const previous = this.current
+      this.current = kind
+      try { await this.reopenOrchestrator() }
+      catch (error) {
+        // The main Session could not open on the new kernel: stay on the old one.
+        this.current = previous
+        await this.reopenOrchestrator()
+        throw error
+      }
+      this.host.store.set(KV.runtime.kernel, kind)
+    })
+    await run
+  }
+  private async checkOmpModels(): Promise<void> {
+    await this.modelRegistry.refreshIfStale()
     const settings = this.host.store.settings()
     for (const model of [settings.eval.model, settings.executor.model, settings.executor.advisor]) {
       if (model && !this.modelRegistry.find(model.provider, model.model)) throw new Error(`Unknown OMP model: ${model.provider}/${model.model}`)
     }
+  }
+
+  private async initialize(kind: KernelKind): Promise<void> {
+    const { agentDir, stateDir } = this.host.machine
+    await mkdir(join(stateDir, 'sessions'), { recursive: true, mode: 0o700 })
+    if (kind === 'claude') {
+      const body = (await readFile(bundledSkills.github.path, 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '').trim()
+      this.githubSkillText = `# Skill: omp-superagent-github\n\n${body}`
+      return
+    }
+    const baseSettings = Settings.isolated(SESSION_SETTINGS)
+    this.authStorage = await discoverAuthStorage(agentDir, { settings: baseSettings, cwd: stateDir })
+    this.modelRegistry = new ModelRegistry(this.authStorage, join(agentDir, 'models.yml'), { settings: baseSettings })
+    await this.modelRegistry.refresh()
+    await this.checkOmpModels()
     const skills = await loadSkillsFromDir({ dir: packagePath('skills'), source: 'omp-superagent' })
     const github = skills.skills.filter(skill => skill.filePath === bundledSkills.github.path)
     if (github.length !== 1) throw new Error(`Expected one bundled GitHub skill at ${bundledSkills.github.path}; found ${github.length}`)
@@ -161,10 +235,17 @@ export class OMPSessions {
       description: 'Helper for one independent slice of this ticket, in its directory with read, bash, edit and write; it cannot report or message anyone, so its result comes back to you' }
   }
 
-  get(sessionId: string): AgentSession | undefined { return this.loaded.get(sessionId) }
+  get(sessionId: string): KernelSession | undefined { return this.loaded.get(sessionId) }
 
   async modelOptions(): Promise<{ id: string; provider: string; name: string }[]> {
     await this.ready
+    if (this.kernel === 'claude') {
+      // The backend's own list, never a built-in one; the choices in use stay selectable when it does not name them or cannot be reached.
+      const settings = this.host.store.settings()
+      const used = [settings.eval.model, settings.executor.model].flatMap(model => model ? [{ id: model.model, provider: model.provider, name: model.model }] : [])
+      const known = await listClaudeModels().catch(() => [])
+      return [...used.filter((model, index) => used.findIndex(other => other.id === model.id) === index && !known.some(other => other.id === model.id)), ...known]
+    }
     await this.modelRegistry.refreshIfStale()
     return this.modelRegistry.getAvailable().map(model => ({ id: model.id, provider: model.provider, name: model.name }))
       .sort((left, right) => `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`))
@@ -176,19 +257,28 @@ export class OMPSessions {
    */
   async applyModel(role: 'orchestrator' | 'worker' | 'advisor', selection: RoleModel | null): Promise<void> {
     await this.checkModel(selection)
-    for (const [sessionId, session] of this.loaded) {
-      if (session.isDisposed) continue
+    for (const [sessionId, loaded] of this.loaded) {
+      if (loaded.isDisposed) continue
       const isMain = sessionId === this.host.masterId
       if (role === 'orchestrator' && !isMain) continue
       if ((role === 'worker' || role === 'advisor') && isMain) continue
+      if (loaded instanceof ClaudeSession) {
+        // Claude Code has no advisor model; model and effort apply to later turns.
+        if (role !== 'advisor' && selection) await loaded.setModel(selection.model, effortOf(selection.thinkingLevel))
+        continue
+      }
+      const session = loaded as unknown as AgentSession
       if (role === 'advisor') {
         if (selection) session.settings.overrideModelRoles({ advisor: roleSelector(selection) })
         session.setAdvisorEnabled(!!selection)
         continue
       }
       if (!selection) continue
+      // A worker still loaded on OMP after a switch to Claude Code keeps its model when OMP does not know the new one.
+      const known = this.modelRegistry.find(selection.provider, selection.model)
+      if (!known) continue
       const thinkingLevel = selection.thinkingLevel as never
-      await session.setModel(this.modelRegistry.find(selection.provider, selection.model)!, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
+      await session.setModel(known, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
       session.setThinkingLevel(thinkingLevel, false)
     }
   }
@@ -196,27 +286,30 @@ export class OMPSessions {
   /** @throws for a selector naming a model OMP does not know. */
   async checkModel(selection: RoleModel | null): Promise<void> {
     await this.ready
+    if (this.kernel === 'claude') return
     if (selection && !this.modelRegistry.find(selection.provider, selection.model)) throw new Error(`Unknown OMP model: ${selection.provider}/${selection.model}`)
   }
 
-  async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
+  async ensure(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<KernelSession> {
     await this.ready
     const current = this.loaded.get(sessionId)
     if (current) return current
     const existing = this.loading.get(sessionId)
     if (existing) return existing
-    const opening = this.open(sessionId, cwd, title, role, ticket).finally(() => {
+    const opening = (this.kernel === 'claude' ? this.openClaude(sessionId, cwd, title, role, ticket) : this.open(sessionId, cwd, title, role, ticket)).finally(() => {
       this.loading.delete(sessionId)
     })
     this.loading.set(sessionId, opening)
     return opening
   }
 
-  private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<AgentSession> {
+  private async open(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<KernelSession> {
     if (this.host.closing()) throw new Error('omp-superagent is stopping')
     if (role === 'worker' && (!ticket || !liveTicket(ticket))) throw new Error('Worker Session needs a live Ticket')
     const sessionDir = join(this.host.machine.stateDir, 'sessions')
-    const file = this.host.store.get(KV.sessions.files(sessionId))
+    const stored = this.host.store.get(KV.sessions.files(sessionId))
+    // A Session last run on the Claude Code kernel starts a new OMP transcript.
+    const file = stored && await isClaudeJournal(stored) ? undefined : stored
     let sessionManager: SessionManager
     if (file) {
       try { sessionManager = await SessionManager.open(file, sessionDir, undefined, { initialCwd: cwd, throwIfMissing: true }) }
@@ -287,17 +380,81 @@ export class OMPSessions {
       const sessionFile = session.sessionFile
       if (!sessionFile) throw new Error(`OMP did not create a session file for ${sessionId}`)
       this.host.store.set(KV.sessions.files(sessionId), sessionFile)
+      // The main Session keeps its chat history when it comes back from the Claude Code kernel.
+      const chat = stored && role === 'orchestrator' ? (await Journal.open(stored, cwd).catch(() => undefined))?.chat() ?? [] : []
+      for (const entry of chat) {
+        session.sessionManager.appendCustomMessageEntry(entry.customType, entry.content as never, entry.display, entry.details, entry.attribution as never)
+      }
+      if (chat.length) await session.flushToDisk()
     }
     await session.setSessionName(title, 'user')
     if (file && configured && model) {
       await session.setModel(model, 'default', { ...(thinkingLevel === 'auto' ? {} : { thinkingLevel }), persist: false })
       session.setThinkingLevel(thinkingLevel, false)
     }
+    const kernel = session as unknown as KernelSession
+    this.loaded.set(sessionId, kernel)
+    return kernel
+  }
+
+  /** Claude Code kernel: one persistent Agent SDK query per Session, resumed from its journal. */
+  private async openClaude(sessionId: string, cwd: string, title: string, role: 'orchestrator' | 'worker', ticket?: Ticket): Promise<KernelSession> {
+    if (this.host.closing()) throw new Error('omp-superagent is stopping')
+    if (role === 'worker' && (!ticket || !liveTicket(ticket))) throw new Error('Worker Session needs a live Ticket')
+    const stored = this.host.store.get(KV.sessions.files(sessionId))
+    // A Session last run on OMP starts a new journal: the worker is given its assignment anew, and the main Session keeps its chat history.
+    const file = stored && !await isClaudeJournal(stored) ? undefined : stored
+    let journal: Journal
+    if (file) {
+      try { journal = await Journal.open(file, cwd) }
+      catch (error) { throw new Error(`Cannot reopen Claude Code Session ${sessionId} at ${file}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }) }
+    } else {
+      journal = await Journal.create(join(this.host.machine.stateDir, 'sessions'), cwd)
+      if (stored && role === 'orchestrator') await journal.importChat(stored)
+    }
+    const settings = this.host.store.settings()
+    const configured = role === 'orchestrator' ? settings.eval.model : settings.executor.model
+    const tools = this.host.tools(sessionId, ticket)
+    let session: ClaudeSession | undefined
+    const options = this.claudeOptions(cwd, tools, this.claudePrompt(role, tools), configured, role === 'worker' ? WORK_TOOLS_CLAUDE : ['Read', 'Bash'])
+    // Mirror OMP's compaction thresholds and its 60 s move of a long command to the background.
+    options.env = role === 'worker' ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '100000', BASH_DEFAULT_TIMEOUT_MS: '60000' } : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '60000' }
+    if (role === 'worker' && ticket) {
+      options.projectSettings = true
+      options.agents = { [SUBAGENT]: { description: 'Helper for one independent slice of this ticket, in its directory with read, bash, edit and write; it cannot report or message anyone, so its result comes back to you',
+        prompt: SUBAGENT_PROMPT, tools: ['Read', 'Bash', 'Edit', 'Write'] } }
+      // Hooks also fire for subagent tool calls, so the guard covers them.
+      options.guard = (toolName, input) => {
+        const current = this.host.store.tickets.get(ticket.id)
+        if (!current || !liveTicket(current)) return { block: 'Ticket ended; new work needs a new authorized ticket' }
+        if (toolName !== 'Agent') return undefined
+        if (overridesSubagent(cwd)) return { block: `A repository agent definition named ${SUBAGENT} would replace the ticket subagent; subagents are unavailable for this ticket` }
+        if ((session?.asyncJobManager.getRunningJobs().filter(job => job.type === 'task').length ?? 0) >= MAX_SUBAGENTS) {
+          return { block: `At most ${MAX_SUBAGENTS} subagents run at once; wait for one to finish` }
+        }
+        return input.subagent_type === SUBAGENT ? undefined : { input: { ...input, subagent_type: SUBAGENT } }
+      }
+    }
+    session = new ClaudeSession(journal, options)
+    if (!file) this.host.store.set(KV.sessions.files(sessionId), journal.file)
+    journal.setName(title)
+    await journal.flush()
     this.loaded.set(sessionId, session)
     return session
   }
 
-  private bind(session: AgentSession, ticketId?: string): void {
+  private claudeOptions(cwd: string, tools: Tool[], systemPrompt: string, configured: RoleModel | null | undefined, builtinTools: string[]): ClaudeOptions {
+    return { cwd, tools, builtinTools, systemPrompt: rewriteToolNames(systemPrompt, tools.map(item => item.name)),
+      model: configured?.model, effort: effortOf(configured?.thinkingLevel) }
+  }
+  private claudePrompt(role: 'orchestrator' | 'worker', tools: Tool[]): string {
+    const version = this.host.prompts.current()
+    const prompt = this.host.prompts.compose(version.config, role, this.host.watchdogEnvironment?.())
+    // Static per role, so every ticket's worker shares one provider prefix cache.
+    return [prompt, role === 'worker' ? CLAUDE_WORKER_NOTE : CLAUDE_MAIN_NOTE, ...role === 'worker' ? [this.githubSkillText] : []].join('\n\n')
+  }
+
+  private bind(session: KernelSession, ticketId?: string): void {
     this.delivery.bind(session, inputIds => {
       if (!ticketId) return
       const ticket = this.host.store.tickets.get(ticketId)
@@ -383,6 +540,7 @@ export class OMPSessions {
     if (loaded) return loaded.messages
     const file = this.host.store.get(KV.sessions.files(alias))
     if (!file) return []
+    if (await isClaudeJournal(file)) return (await Journal.open(file, this.host.machine.stateDir)).messages()
     const manager = await SessionManager.open(file, join(this.host.machine.stateDir, 'sessions'), undefined,
       { initialCwd: this.host.machine.stateDir, throwIfMissing: true })
     return manager.getBranch().flatMap<unknown>(entry => entry.type === 'message' ? [entry.message]
@@ -407,6 +565,11 @@ export class OMPSessions {
     if (this.host.closing()) throw new Error('omp-superagent is stopping')
     const settings = this.host.store.settings()
     const configured = settings.eval.model ?? settings.executor.model
+    if (this.kernel === 'claude') {
+      const options = this.claudeOptions(cwd, tools, sidecarPrompt, configured, ['Read'])
+      options.maxTurns = 20
+      return runClaudeOnce(options, promptText, timeoutMs, this.host.lifetime)
+    }
     const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
     if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
     const thinkingLevel = configured?.thinkingLevel as never
@@ -464,12 +627,18 @@ export class OMPSessions {
     if (this.host.closing()) throw new Error('omp-superagent is stopping')
     const settings = this.host.store.settings()
     const configured = settings.eval.model ?? settings.executor.model
-    const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
-    if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
-    const thinkingLevel = 'low' as never
     const version = this.host.prompts.current()
     const customSystemPrompt = `${watchdogPrompt}\n\n${environmentSection(version.config, this.host.watchdogEnvironment?.())}`
     const cwd = this.host.machine.stateDir
+    if (this.kernel === 'claude') {
+      const options = this.claudeOptions(cwd, tools, customSystemPrompt, configured && { ...configured, thinkingLevel: 'low' }, ['Read', 'Bash'])
+      options.effort = configured?.thinkingLevel === 'off' ? 'off' : 'low'
+      options.maxTurns = 30
+      return runClaudeOnce(options, promptText, timeoutMs, this.host.lifetime, true)
+    }
+    const model = configured ? this.modelRegistry.find(configured.provider, configured.model) : undefined
+    if (configured && !model) throw new Error(`Unknown OMP model: ${configured.provider}/${configured.model}`)
+    const thinkingLevel = 'low' as never
     const { session } = await createAgentSession({
       cwd,
       agentDir: this.host.machine.agentDir,

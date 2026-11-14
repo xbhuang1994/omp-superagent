@@ -1,5 +1,6 @@
 /** OMP executor: one persistent worker Session and workspace directory per Ticket. */
-import { MAIN_AGENT_ID, type AgentSession } from '@oh-my-pi/pi-coding-agent'
+import { MAIN_AGENT_ID } from '@oh-my-pi/pi-coding-agent'
+import type { KernelSession } from '../kernel/types.ts'
 import { mkdir, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { key, latestAssignment, liveTicket, runningAssignment, threadKey, waitsForPerson } from '../core/index.ts'
@@ -142,7 +143,7 @@ export class WorkerSlots {
 /** Executes assignments through OMP terminal events; model retries belong exclusively to OMP. */
 export class OMPExecutor implements Executor {
   private readonly runningTickets = new Set<string>()
-  private readonly subscriptions = new Map<string, { session: AgentSession; unsubscribe: () => void }>()
+  private readonly subscriptions = new Map<string, { session: KernelSession; unsubscribe: () => void }>()
   private readonly unloadAfterEnd = new Set<string>()
   private readonly stopping = new Map<string, Promise<void>>()
   /** Shell jobs a worker left to a person at a handoff, by ticket: they run until the Assignment ends and wake no one. */
@@ -295,7 +296,7 @@ export class OMPExecutor implements Executor {
     })
   }
 
-  private observe(session: AgentSession, ticketId: string): void {
+  private observe(session: KernelSession, ticketId: string): void {
     const existing = this.subscriptions.get(ticketId)
     if (existing?.session === session) return
     existing?.unsubscribe()
@@ -316,7 +317,7 @@ export class OMPExecutor implements Executor {
   }
 
   /** Nothing the worker runs wakes it again: free its slot and report, or unload a ticket that stayed ended meanwhile. */
-  private turnOver(ticketId: string, session: AgentSession, note?: string): void {
+  private turnOver(ticketId: string, session: KernelSession, note?: string): void {
     this.runningTickets.delete(ticketId)
     if (this.unloadAfterEnd.delete(ticketId)) {
       const current = this.host.store.tickets.get(ticketId)
@@ -334,7 +335,7 @@ export class OMPExecutor implements Executor {
    * timer (Watchdog inspects long-running jobs semantically). A handoff to a person ends that at once: its subagents stop,
    * and its own shell jobs, such as a server offered for review, run on until the Assignment ends without waking it.
    */
-  private backgrounded(ticketId: string, session: AgentSession): void {
+  private backgrounded(ticketId: string, session: KernelSession): void {
     const ticket = this.host.store.tickets.get(ticketId)
     if (this.unloadAfterEnd.has(ticketId)) {
       this.turnOver(ticketId, session)
@@ -346,7 +347,7 @@ export class OMPExecutor implements Executor {
     }
   }
   /** Acknowledged jobs deliver nothing, so neither the jobs left running nor the cancelled ones wake the worker. */
-  private leaveToPerson(ticketId: string, session: AgentSession): void {
+  private leaveToPerson(ticketId: string, session: KernelSession): void {
     const jobs = session.asyncJobManager
     if (!jobs) return
     const running = jobs.getRunningJobs({ ownerId: MAIN_AGENT_ID })
@@ -394,7 +395,7 @@ export class OMPExecutor implements Executor {
     return true
   }
 
-  private async wakeAfterCancel(ticketId: string, session: AgentSession, note: string, hasRemaining: boolean): Promise<void> {
+  private async wakeAfterCancel(ticketId: string, session: KernelSession, note: string, hasRemaining: boolean): Promise<void> {
     const live = () => {
       if (this.host.closing()) throw new Error('omp-superagent is stopping')
       if (this.host.paused()) throw new Later('Processing is paused')
@@ -424,7 +425,7 @@ export class OMPExecutor implements Executor {
 
 
   /** `note` adds what the Executor did to the worker's background work to a waiting report. */
-  private async workerEnded(ticketId: string, session: AgentSession, note?: string): Promise<void> {
+  private async workerEnded(ticketId: string, session: KernelSession, note?: string): Promise<void> {
     const ticket = this.host.store.tickets.get(ticketId)
     const assignment = ticket && liveTicket(ticket) ? runningAssignment(ticket) : undefined
     if (!ticket || !assignment || this.host.closing()) return

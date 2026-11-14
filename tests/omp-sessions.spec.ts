@@ -91,7 +91,7 @@ it('blocks built-in and custom tools as soon as the Ticket ends', async () => {
   await ended.promise
   expect(existsSync(join(f.dir, 'blocked.txt'))).toBe(false)
   expect(f.probe).not.toHaveBeenCalled()
-  expect(work.messages.some(message => message.role === 'toolResult' && message.content.some(block => block.type === 'text' && block.text.includes('Ticket ended')))).toBe(true)
+  expect(work.messages.some(message => message.role === 'toolResult' && message.content.some((block: { type: string; text?: string }) => block.type === 'text' && block.text?.includes('Ticket ended')))).toBe(true)
 })
 
 it('runs a ticket-task subagent with the worker tools as a background job and blocks it once the Ticket ends', async () => {
@@ -144,7 +144,7 @@ it('refuses task when a discovered definition shadows ticket-task, and never con
   const ended = Promise.withResolvers<void>(); work.subscribe(event => { if (event.type === 'agent_end' && event.isTerminal !== false) ended.resolve() })
   await f.sessions.prompt('worker-ticket-1', 'work-1', 'work', 'queue')
   await ended.promise
-  const results = work.messages.flatMap(message => message.role === 'toolResult' ? message.content.flatMap(block => block.type === 'text' ? [block.text] : []) : [])
+  const results = work.messages.flatMap(message => message.role === 'toolResult' ? message.content.flatMap((block: { type: string; text?: string }) => block.type === 'text' ? [block.text] : []) : [])
   expect(results.some(text => text.includes('A finished subagent is not continued'))).toBe(true)
   expect(results.some(text => text.includes('would replace the ticket subagent'))).toBe(true)
 })
@@ -219,7 +219,7 @@ it('reviews worker turns with the configured advisor model and turns the advisor
   const current = ticket(f.dir)
   f.store.tickets.save(current)
   const work = await f.sessions.ensure('worker-ticket-1', f.dir, 'Worker', 'worker', current)
-  expect(work.isAdvisorEnabled()).toBe(true)
+  expect(work.isAdvisorEnabled?.()).toBe(true)
   const ended = Promise.withResolvers<void>(); work.subscribe(event => { if (event.type === 'agent_end' && event.isTerminal !== false) ended.resolve() })
   await f.sessions.prompt('worker-ticket-1', 'work-1', 'work', 'queue')
   await ended.promise
@@ -227,7 +227,7 @@ it('reviews worker turns with the configured advisor model and turns the advisor
   await vi.waitFor(() => { expect(models()).toContain('fixture-two') })
   expect(models()[0]).toBe('fixture')
   await f.sessions.applyModel('advisor', null)
-  expect(work.isAdvisorEnabled()).toBe(false)
+  expect(work.isAdvisorEnabled?.()).toBe(false)
 })
 
 it('adapts Zod parsing and JSON results without a model', async () => {

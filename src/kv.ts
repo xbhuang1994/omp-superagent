@@ -33,6 +33,10 @@ export const KV = {
     builtIn: family<string, [base: string]>('prompt-built-in:') },
   /** Runtime: the main Session ID, and the startup JSON's models and GitHub Source as last started with. */
   runtime: { masterId: record<string>('master-id'),
+    /** The execution kernel chosen in the panel, and the startup JSON's kernel as last started with. */
+    kernel: record<'omp' | 'claude'>('kernel'), startupKernel: record<'omp' | 'claude'>('startup-kernel'),
+    /** The model choices of a kernel that is not the current one; the current kernel's are the settings themselves. */
+    kernelModels: family<{ eval: RoleModel | null; executor: RoleModel | null; advisor: RoleModel | null }, [kernel: 'omp' | 'claude']>('kernel-models:'),
     startupModels: record<{ eval: RoleModel | null; executor: RoleModel | null; advisor?: RoleModel | null }>('startup-models'),
     startupGithub: record<{ enabled: boolean; config: Record<string, unknown> } | null>('startup-github') },
   /** Sessions: OMP JSONL file by durable external alias. */
